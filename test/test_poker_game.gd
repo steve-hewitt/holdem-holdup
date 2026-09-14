@@ -409,3 +409,80 @@ func test_flop_bet_and_full_raise_grows_minimum() -> void:
 			game.apply("fold")
 	assert_eq(game.street, PokerGame.Street.TURN)
 	assert_eq(game.current_bet, 0)
+
+
+func test_three_way_all_in_does_not_skip_pending_call() -> void:
+	# P0 and P1 shove for 100; the big blind (P2) still owes 80 and must get a
+	# turn instead of being swept into an immediate run-out.
+	var game := _make_game(3)
+	game.players[0].chips = 100
+	game.players[1].chips = 100
+	game.players[2].chips = 1000
+	game.start_hand()
+	assert_eq(game.current_player().id, 0)
+	game.apply("raise", 100)
+	assert_eq(game.current_player().id, 1)
+	game.apply("call")
+	assert_eq(game.current_player().id, 2, "A lone caller who owes chips is not skipped")
+	var la := game.get_legal_actions()
+	assert_true(la["can_call"], "The big blind can call the all-in")
+	assert_false(la["can_check"], "The big blind still faces a bet")
+	game.apply("call")
+	assert_true(game.hand_over)
+	assert_eq(game.community.size(), 5, "Board runs out once betting is truly closed")
+
+
+func test_no_raise_into_dry_side_pot() -> void:
+	# Heads-up: P0 (short) shoves all-in. P1 has chips but no opponent can
+	# call, so raising is illegal -- only call or fold.
+	var game := _make_game(2)
+	game.players[0].chips = 100
+	game.start_hand()
+	assert_eq(game.current_player().id, 0)
+	game.apply("raise", 100)
+	assert_eq(game.current_player().id, 1)
+	var la := game.get_legal_actions()
+	assert_true(la["can_call"])
+	assert_false(la["can_raise"], "No raising when every opponent is all-in")
+
+
+func test_fold_out_refunds_uncalled_chips() -> void:
+	var game := _make_game(2)
+	game.start_hand()
+	assert_eq(game.current_player().id, 0)
+	game.apply("raise", 500)
+	assert_eq(game.current_player().id, 1)
+	game.apply("fold")
+	assert_true(game.hand_over)
+	# SB put in 500, but only the big blind's 20 was actually at stake.
+	assert_eq(game.players[0].won_last, 40, "Pot excludes the returned 480")
+	assert_eq(game.players[0].net_last, 20, "Net win is the folded big blind")
+	assert_eq(game.players[0].chips, 1020, "Own uncalled chips come back")
+
+
+func test_showdown_results_one_row_per_player() -> void:
+	# Board plays for everyone: a three-way tie with a side pot. Each player
+	# must appear exactly once in showdown_results, never once per pot.
+	var game := _make_game(3, 17)
+	game.start_hand()
+	game.community = [
+		Card.new(14, 0), Card.new(13, 1), Card.new(12, 2), Card.new(11, 3), Card.new(10, 0),
+	]
+	game.players[0].hole = [Card.new(2, 0), Card.new(3, 1)]
+	game.players[1].hole = [Card.new(2, 1), Card.new(3, 2)]
+	game.players[2].hole = [Card.new(4, 0), Card.new(5, 1)]
+	for i in range(3):
+		game.players[i].folded = false
+		game.players[i].chips = 0
+	game.players[0].committed = 100
+	game.players[1].committed = 300
+	game.players[2].committed = 300
+	game._do_showdown()
+	assert_eq(game.showdown_results.size(), 3, "One row per non-folded player")
+	var ids: Array = []
+	for r in game.showdown_results:
+		ids.append(r["player"])
+		assert_eq(r["amount"], game.players[r["player"]].won_last)
+		assert_eq(r["net"], game.players[r["player"]].net_last)
+	for i in range(3):
+		assert_eq(ids.count(i), 1, "Player %d appears exactly once" % i)

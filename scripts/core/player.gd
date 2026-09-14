@@ -23,6 +23,7 @@ var last_action: String = ""
 var last_hand_name: String = ""
 var last_hand_cards: Array = []
 var won_last: int = 0
+var net_last: int = 0      # chips won minus chips put in, for the finished hand
 var is_winner: bool = false
 
 
@@ -44,6 +45,8 @@ func reset_for_hand() -> void:
 	last_action = ""
 	last_hand_name = ""
 	last_hand_cards.clear()
+	won_last = 0
+	net_last = 0
 	is_winner = false
 	if chips <= 0:
 		out = true
