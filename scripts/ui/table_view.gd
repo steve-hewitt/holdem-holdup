@@ -986,26 +986,32 @@ func _refresh_result_panel() -> void:
 	if game.showdown_results.is_empty():
 		_refresh_uncontested_result()
 		return
-	var winners := 0
+	var winners: Array = []
 	for r in game.showdown_results:
 		if r.get("won", false):
-			winners += 1
-	_result_title.text = "Split pot" if winners > 1 else "Showdown"
+			winners.append(r)
+	if winners.size() == 1:
+		var w: Dictionary = winners[0]
+		var wp: PokerPlayer = game.players[int(w["player"])]
+		_result_title.text = "%s %s %d" % [wp.display_name, _win_verb(wp), int(w.get("amount", 0))]
+	elif winners.size() > 1:
+		_result_title.text = "Split pot"
+	else:
+		_result_title.text = "Showdown"
 	for r in game.showdown_results:
 		_add_result_row(r)
 
 
 func _refresh_uncontested_result() -> void:
-	var names: Array = []
-	var amount := 0
 	for p in game.players:
 		if p.is_winner:
-			names.append(p.display_name)
-			amount += p.won_last
-	if names.is_empty():
-		_result_title.text = "Hand complete"
-		return
-	_result_title.text = "%s wins %d" % [" & ".join(PackedStringArray(names)), amount]
+			_result_title.text = "%s %s %d" % [p.display_name, _win_verb(p), p.won_last]
+			return
+	_result_title.text = "Hand complete"
+
+
+func _win_verb(p: PokerPlayer) -> String:
+	return "win" if p.is_human else "wins"
 
 
 func _add_result_row(r: Dictionary) -> void:

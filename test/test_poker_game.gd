@@ -486,3 +486,16 @@ func test_showdown_results_one_row_per_player() -> void:
 		assert_eq(r["net"], game.players[r["player"]].net_last)
 	for i in range(3):
 		assert_eq(ids.count(i), 1, "Player %d appears exactly once" % i)
+
+
+func test_short_small_blind_all_in_closes_betting_at_deal() -> void:
+	# Heads-up: the small blind is all-in for less than the big blind, so the
+	# big blind has no call to make and no opponent to bet into -- the board
+	# must run out instead of offering a meaningless action.
+	var game := _make_game(2)
+	game.players[0].chips = 10
+	game.start_hand()
+	assert_true(game.players[0].all_in)
+	assert_eq(game.current_bet, 20)
+	assert_true(game.hand_over, "Betting is closed once the only opponent is all-in")
+	assert_eq(game.community.size(), 5, "The board runs out to a showdown")

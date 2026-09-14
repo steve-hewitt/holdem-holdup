@@ -121,11 +121,16 @@ func start_hand() -> Array:
 		p.can_raise = true
 
 	var first := _first_preflop_actor(sb_i, bb_i)
-	var nxt := _find_actor(first)
-	if nxt == -1:
+	# Blinds alone can close the betting (e.g. heads-up, small blind all-in for
+	# less than the big blind). Do not hand out an action nobody can use.
+	if _betting_closed():
 		_run_out_and_showdown()
 	else:
-		to_act = nxt
+		var nxt := _find_actor(first)
+		if nxt == -1:
+			_run_out_and_showdown()
+		else:
+			to_act = nxt
 
 	return events.duplicate()
 
@@ -498,6 +503,7 @@ func _build_showdown_results() -> void:
 		showdown_results.append({
 			"player": p.id,
 			"name": p.last_hand_name,
+			"score": HandEvaluator.score(p.hole, community),
 			"cards": p.last_hand_cards,
 			"won": p.is_winner,
 			"amount": p.won_last,
