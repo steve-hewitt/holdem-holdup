@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "holdem_holdup",
+  "project_id": "2bafd79b-c99d-43c8-bacc-339fc3cfcb60"
+}
