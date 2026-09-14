@@ -1,8 +1,9 @@
 # Agent Instructions
 
-Godot **4.7.2** + **GDScript**. "Hold'em Holdup" is a greenfield mobile-game
-scaffold: no scenes, scripts, or main scene exist yet — only `project.godot`
-and `icon.svg`.
+Godot **4.7.2** + **GDScript**. "Hold'em Holdup" is a complete, single-player
+no-limit Texas Hold'em game: you play against three AI opponents at a four-seat
+table. The main scene is `res://scenes/main.tscn`; the table UI is built in code
+(no `.tscn` beyond the root node).
 
 ## Godot CLI (Linux)
 
@@ -12,30 +13,62 @@ and `icon.svg`.
 godot --headless --path . --import              # reimport assets; refresh .godot after adding files
 godot --headless --path . --script res://foo.gd # run a script (must `extends SceneTree` and call quit())
 godot --editor --path .                         # open the GUI editor
-godot --path .                                  # run the game — currently FAILS (no main scene)
+godot --path .                                  # run the game
 ```
 
-- There is **no main scene**, so plain `godot --path .` exits with
-  `Can't run project: no main scene defined`. Set one before relying on a run command.
 - A newly added `class_name`/asset is not registered until `--import` runs.
+- Headless smoke run: `godot --headless --path . --quit-after 120`.
 
-## Godot AI MCP
+## Godot AI MCP — intentionally disabled
 
-`addons/godot_ai` (v4.1.0) is enabled in `project.godot`, and the `godot-ai`
-server is configured in `~/.config/opencode/opencode.json` (HTTP 8000 / WS 9500).
-The `godot-ai_*` tools only work while an editor with the plugin is running.
+This repo deliberately opts out of the editor MCP to stay isolated from the
+sibling `wizards-tower` project, which owns the shared godot-ai server on
+8000/9500. **Do not re-enable `addons/godot_ai` here.**
 
-```bash
-# Start a headless editor that serves MCP. GODOT_AI_ALLOW_HEADLESS=1 is REQUIRED:
-# without it the plugin self-disables MCP whenever it launches headless.
-GODOT_AI_ALLOW_HEADLESS=1 setsid nohup godot --headless --editor --path . \
-  > /tmp/godot_ai_editor.log 2>&1 < /dev/null &
-```
+- `project.godot` has no `[editor_plugins]` entry and no `_mcp_game_helper` autoload.
+- The project-local `opencode.json` sets `mcp.godot-ai.enabled = false` (only for
+  this repo); `opencode debug config` confirms it while `openpencil`/`github` survive.
 
-- Confirm with `session_manage(op="list")`; `readiness: "no_scene"` is normal until a scene exists.
-- Scene/node/property edits are in-memory until `scene_save` (or `project_run(autosave=True)`).
-- Stop with `editor_manage(op="quit")` or by killing the `godot --headless --editor` PID.
-- If the `godot-ai` entry drifts: `client_manage(op="configure", params={"client": "opencode"})`.
+So `godot --editor --path .` here never starts or adopts the shared server, and
+`session_manage(op="list")` will show no session — expected. Develop with the CLI
+and GUT. If MCP is ever needed, give this repo its own `XDG_CONFIG_HOME` + port
+pair (e.g. 8001/9501) instead of reusing 8000/9500.
+
+## Game structure
+
+- `scripts/core/` — pure rules, no UI:
+  - `card.gd`, `deck.gd` — cards and a seedable deck.
+  - `hand_evaluator.gd` — best-of-7 evaluation, categories, tiebreakers, wheels.
+  - `player.gd` — per-seat runtime state.
+  - `poker_game.gd` — turn/street state machine: blinds, min-raise rules, short
+    all-ins, side pots, uncalled-bet refunds, split pots, odd chips, dealer
+    rotation, heads-up blinds. Public API: `setup`, `start_hand`,
+    `get_legal_actions`, `apply` — `start_hand`/`apply` each return a fresh Array
+    of presentation events (they do **not** accumulate).
+- `scripts/core/poker_ai.gd` — Monte Carlo equity plus personality-weighted
+  betting (`rock` / `aggressive` / `loose` / `balanced`).
+- `scripts/ui/` — `card_view.gd`, `seat_view.gd`, `table_view.gd` draw the table
+  and animate events. `table_view.instant = true` applies events without
+  animation (used by turbo tests).
+- `scripts/main.gd` — screens, turn loop, input, pause/results.
+- `scripts/audio/sound_bank.gd` — autoloaded as `SoundBank`; synthesises all SFX.
+
+## Controls
+
+Mouse/touch buttons; keyboard `F` fold, `C`/`Space` check/call, `R` raise
+(`↑`/`↓` adjust the amount), `Esc` pause. Mobile orientation is landscape.
+
+## Development / test flags
+
+Pass after `--`, e.g. `godot --path . -- --autoplay`. These are test aids and
+safe to leave in the code:
+
+- `--autoplay` — an AI plays the human seat by pressing the real UI buttons.
+- `--turbo` — implies `--autoplay`; skips animation and delays.
+- `--hands=N` — quit after N hands, printing chip totals.
+- `--shot=path.png` / `--frames=N` — start a game and screenshot after N frames.
+- `--shot-title=path.png` — screenshot the title screen.
+- `--shot=path.png --shot-screen=pause|result` — screenshot those screens.
 
 ## Tests
 

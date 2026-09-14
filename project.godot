@@ -11,21 +11,21 @@ config_version=5
 [application]
 
 config/name="Hold'em Holdup"
+run/main_scene="res://scenes/main.tscn"
 config/features=PackedStringArray("4.7", "Mobile")
 config/icon="res://icon.svg"
 
 [autoload]
 
-_mcp_game_helper="*res://addons/godot_ai/runtime/game_helper.gd"
+SoundBank="*res://scripts/audio/sound_bank.gd"
 
 [display]
 
+window/size/viewport_width=1280
+window/size/viewport_height=720
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
-
-[editor_plugins]
-
-enabled=PackedStringArray("res://addons/godot_ai/plugin.cfg")
+window/handheld/orientation=0
 
 [physics]
 
@@ -35,3 +35,4 @@ enabled=PackedStringArray("res://addons/godot_ai/plugin.cfg")
 
 rendering_device/driver.windows="d3d12"
 renderer/rendering_method="mobile"
+environment/defaults/default_clear_color=Color(0.03, 0.05, 0.05, 1)
