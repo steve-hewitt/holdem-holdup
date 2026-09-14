@@ -1,77 +1,69 @@
-# Project Instructions for AI Agents
+# Agent Instructions
 
-This file provides instructions and context for AI coding agents working on this project.
+Godot **4.7.2** + **GDScript**. "Hold'em Holdup" is a greenfield mobile-game
+scaffold: no scenes, scripts, or main scene exist yet — only `project.godot`
+and `icon.svg`.
 
-<!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:6cd5cc61 -->
-## Beads Issue Tracker
+## Godot CLI (Linux)
 
-This project uses **bd (beads)** for issue tracking. Run `bd prime` to see full workflow context and commands.
-
-### Quick Reference
-
-```bash
-bd ready              # Find available work
-bd show <id>          # View issue details
-bd update <id> --claim  # Claim work
-bd close <id>         # Complete work
-```
-
-### Rules
-
-- Use `bd` for ALL task tracking — do NOT use TodoWrite, TaskCreate, or markdown TODO lists
-- Run `bd prime` for detailed command reference and session close protocol
-- Use `bd remember` for persistent knowledge — do NOT use MEMORY.md files
-
-**Architecture in one line:** issues live in a local Dolt DB; sync uses `refs/dolt/data` on your git remote; `.beads/issues.jsonl` is a passive export. See https://github.com/gastownhall/beads/blob/main/docs/SYNC_CONCEPTS.md for details and anti-patterns.
-
-## Agent Context Profiles
-
-The managed Beads block is task-tracking guidance, not permission to override repository, user, or orchestrator instructions.
-
-- **Conservative (default)**: Use `bd` for task tracking. Do not run git commits, git pushes, or Dolt remote sync unless explicitly asked. At handoff, report changed files, validation, and suggested next commands.
-- **Minimal**: Keep tool instruction files as pointers to `bd prime`; use the same conservative git policy unless active instructions say otherwise.
-- **Team-maintainer**: Only when the repository explicitly opts in, agents may close beads, run quality gates, commit, and push as part of session close. A current "do not commit" or "do not push" instruction still wins.
-
-## Session Completion
-
-This protocol applies when ending a Beads implementation workflow. It is subordinate to explicit user, repository, and orchestrator instructions.
-
-1. **File issues for remaining work** - Create beads for anything that needs follow-up
-2. **Run quality gates** (if code changed) - Tests, linters, builds
-3. **Update issue status** - Close finished work, update in-progress items
-4. **Handle git/sync by active profile**:
-   ```bash
-   # Conservative/minimal/default: report status and proposed commands; wait for approval.
-   git status
-
-   # Team-maintainer opt-in only, unless current instructions forbid it:
-   git pull --rebase
-   git push
-   git status
-   ```
-5. **Hand off** - Summarize changes, validation, issue status, and any blocked sync/commit/push step
-
-**Critical rules:**
-- Explicit user or orchestrator instructions override this Beads block.
-- Do not commit or push without clear authority from the active profile or the current user request.
-- If a required sync or push is blocked, stop and report the exact command and error.
-<!-- END BEADS INTEGRATION -->
-
-
-## Build & Test
-
-_Add your build and test commands here_
+`godot` is v4.7.2 on PATH (`~/.local/bin/godot`). Run CLI commands with `--path .`.
 
 ```bash
-# Example:
-# npm install
-# npm test
+godot --headless --path . --import              # reimport assets; refresh .godot after adding files
+godot --headless --path . --script res://foo.gd # run a script (must `extends SceneTree` and call quit())
+godot --editor --path .                         # open the GUI editor
+godot --path .                                  # run the game — currently FAILS (no main scene)
 ```
 
-## Architecture Overview
+- There is **no main scene**, so plain `godot --path .` exits with
+  `Can't run project: no main scene defined`. Set one before relying on a run command.
+- A newly added `class_name`/asset is not registered until `--import` runs.
 
-_Add a brief overview of your project architecture_
+## Godot AI MCP
 
-## Conventions & Patterns
+`addons/godot_ai` (v4.1.0) is enabled in `project.godot`, and the `godot-ai`
+server is configured in `~/.config/opencode/opencode.json` (HTTP 8000 / WS 9500).
+The `godot-ai_*` tools only work while an editor with the plugin is running.
 
-_Add your project-specific conventions here_
+```bash
+# Start a headless editor that serves MCP. GODOT_AI_ALLOW_HEADLESS=1 is REQUIRED:
+# without it the plugin self-disables MCP whenever it launches headless.
+GODOT_AI_ALLOW_HEADLESS=1 setsid nohup godot --headless --editor --path . \
+  > /tmp/godot_ai_editor.log 2>&1 < /dev/null &
+```
+
+- Confirm with `session_manage(op="list")`; `readiness: "no_scene"` is normal until a scene exists.
+- Scene/node/property edits are in-memory until `scene_save` (or `project_run(autosave=True)`).
+- Stop with `editor_manage(op="quit")` or by killing the `godot --headless --editor` PID.
+- If the `godot-ai` entry drifts: `client_manage(op="configure", params={"client": "opencode"})`.
+
+## Tests
+
+**GUT 9.7.1** is installed under `addons/gut/`. Tests live in `test/`, named
+`test_*.gd`, extending `GutTest`. Run them headless:
+
+```bash
+godot --headless --path . -s addons/gut/gut_cmdln.gd -gdir=res://test -gexit
+```
+
+Run `--import` first after adding a test script. If `res://test` is missing,
+GUT prints "Nothing was run" and still exits 0 (a silent pass). There is no
+package manager / npm / pytest here — do not invent test commands.
+
+## Conventions & gotchas
+
+- Renderer is `mobile` with `canvas_items` stretch; 3D uses Jolt Physics.
+  `rendering_device/driver.windows="d3d12"` is Windows-only — on Linux the
+  mobile renderer runs on Vulkan.
+- Commit Godot `.import` sidecars next to their assets. Never commit `.godot/`,
+  `/android/`, or `*Zone.Identifier*` (Windows extraction artifacts) — already gitignored.
+- `addons/.godot_ai_update/` is update staging and self-ignored; leave it alone.
+
+## Beads issue tracking
+
+Uses `bd`; run `bd prime` for the full workflow. Prefix: `holdem-holdup`.
+Invoke `bd` via the shell (there is no `bd` tool). Default profile is
+conservative: do not commit, push, or `bd dolt push` unless explicitly asked.
+Sync remote: `git+https://github.com/steve-hewitt/holdem-holdup.git`.
+
+`AGENTS.md` and `CLAUDE.md` are independent copies — mirror substantive edits.

@@ -2,6 +2,9 @@
 .godot/
 /android/
 
+# Windows extraction artifacts (Zone.Identifier ADS) from copying addons in
+*Zone.Identifier*
+
 # Beads / Dolt files (added by bd init)
 .dolt/
 *.db
