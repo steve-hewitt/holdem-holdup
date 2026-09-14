@@ -308,3 +308,104 @@ func test_elimination_and_game_over() -> void:
 				game.apply("check")
 	assert_true(game.game_over, "Game ends when one player holds all the chips")
 	assert_eq(_total_chips(game), 300)
+
+
+func test_illegal_actions_rejected() -> void:
+	var game := _make_game(4)
+	game.start_hand()
+	# First actor faces the big blind: a free check is illegal.
+	var la := game.get_legal_actions()
+	assert_gt(la["to_call"], 0)
+	var before := game.to_act
+	assert_true(game.apply("check").is_empty(), "Cannot check while facing a bet")
+	assert_eq(game.to_act, before, "A rejected action does not advance play")
+	assert_true(game.apply("bogus").is_empty(), "Unknown actions are rejected")
+	assert_eq(game.to_act, before)
+	# Reach the flop on checks/calls; the first actor can check, not call.
+	var guard := 0
+	while game.street == PokerGame.Street.PREFLOP and not game.hand_over and guard < 50:
+		guard += 1
+		var l := game.get_legal_actions()
+		if l.get("can_check", false):
+			game.apply("check")
+		else:
+			game.apply("call")
+	assert_eq(game.street, PokerGame.Street.FLOP)
+	var flop_la := game.get_legal_actions()
+	assert_true(flop_la["can_check"])
+	assert_false(flop_la["can_call"])
+	var flop_before := game.to_act
+	assert_true(game.apply("call").is_empty(), "Cannot call when nothing is bet")
+	assert_eq(game.to_act, flop_before)
+	# Once the hand is over, no action is accepted.
+	while not game.hand_over:
+		game.apply("fold")
+	assert_true(game.apply("raise", 100).is_empty(), "No actions once the hand is over")
+
+
+func test_raise_to_current_bet_clamps_to_minimum() -> void:
+	var game := _make_game(4)
+	game.start_hand()
+	var actor := game.current_player()
+	game.apply("raise", game.current_bet)
+	assert_eq(actor.bet, BB + BB, "A raise at/below the current bet clamps up to the minimum")
+
+
+func test_blinds_increase_progression() -> void:
+	var game := _make_game(4)
+	assert_eq(game.small_blind, 10)
+	assert_eq(game.big_blind, 20)
+	game._increase_blinds()
+	assert_eq(game.small_blind, 15)
+	assert_eq(game.big_blind, 30)
+	game._increase_blinds()
+	assert_eq(game.small_blind, 25)
+	assert_eq(game.big_blind, 50)
+	game._increase_blinds()
+	assert_eq(game.small_blind, 40)
+	assert_eq(game.big_blind, 80)
+
+
+func test_flop_bet_and_full_raise_grows_minimum() -> void:
+	var game := _make_game(3, 42)
+	game.start_hand()
+	var guard := 0
+	while game.street == PokerGame.Street.PREFLOP and not game.hand_over and guard < 50:
+		guard += 1
+		var l := game.get_legal_actions()
+		if l.get("can_check", false):
+			game.apply("check")
+		else:
+			game.apply("call")
+	assert_eq(game.street, PokerGame.Street.FLOP, "Reached the flop on checks/calls")
+	assert_eq(game.current_bet, 0)
+	assert_eq(game.min_raise, BB, "Minimum raise resets each street")
+	# The opener bets the minimum.
+	var opener := game.current_player()
+	var la0 := game.get_legal_actions()
+	assert_true(la0["can_check"])
+	assert_eq(la0["min_raise_to"], BB)
+	game.apply("raise", la0["min_raise_to"])
+	assert_eq(opener.bet, BB)
+	assert_eq(game.current_bet, BB)
+	# A full raise grows the minimum increment and reopens the action.
+	var raiser := game.current_player()
+	game.apply("raise", game.current_bet + 2 * BB)
+	assert_eq(raiser.bet, 3 * BB)
+	assert_eq(game.min_raise, 2 * BB, "A full raise updates the minimum increment")
+	var la2 := game.get_legal_actions()
+	assert_true(la2["can_raise"])
+	assert_eq(la2["min_raise_to"], game.current_bet + 2 * BB)
+	# Everyone calls; the street completes onto the turn with clean resets.
+	guard = 0
+	while game.street == PokerGame.Street.FLOP and not game.hand_over and guard < 50:
+		guard += 1
+		var l2 := game.get_legal_actions()
+		if l2.get("can_check", false):
+			game.apply("check")
+		elif l2.get("can_call", false):
+			game.apply("call")
+		else:
+			game.apply("fold")
+	assert_eq(game.street, PokerGame.Street.TURN)
+	assert_eq(game.current_bet, 0)

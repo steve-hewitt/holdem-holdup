@@ -368,16 +368,7 @@ func _auto_press_human(my_session: int) -> void:
 		return
 	var decision := ai.decide(game, p)
 	# Drive the real buttons so the whole UI wiring is exercised.
-	match decision.get("action", "check"):
-		"fold":
-			table._fold_button.pressed.emit()
-		"raise":
-			var la := game.get_legal_actions()
-			table._raise_slider.value = clampi(decision.get("amount", 0),
-				int(la.get("min_raise_to", 0)), int(la.get("max_raise_to", 0)))
-			table._raise_button.pressed.emit()
-		_:
-			table._call_button.pressed.emit()
+	table.press_action(decision.get("action", "check"), decision.get("amount", 0))
 
 
 func _finish_hand(my_session: int) -> void:
@@ -490,9 +481,11 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	match key:
 		KEY_F:
-			table._on_fold()
+			if not table._fold_button.disabled:
+				table._on_fold()
 		KEY_C, KEY_SPACE:
-			table._on_call()
+			if not table._call_button.disabled:
+				table._on_call()
 		KEY_R:
 			if not table._raise_button.disabled:
 				table._on_raise()
@@ -541,7 +534,10 @@ func _process(_delta: float) -> void:
 	if _shot_frames > 0:
 		_shot_frames -= 1
 		if _shot_frames == 0:
-			var image := get_viewport().get_texture().get_image()
-			image.save_png(_screenshot_path)
+			var image: Image = get_viewport().get_texture().get_image()
+			if image != null:
+				image.save_png(_screenshot_path)
+			else:
+				push_warning("Screenshot capture returned no image; skipping " + _screenshot_path)
 			SoundBank.stop_all()
 			get_tree().quit()

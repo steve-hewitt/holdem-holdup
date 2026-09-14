@@ -37,10 +37,3 @@ func draw() -> Card:
 
 func remaining() -> int:
 	return cards.size()
-
-
-func has_card(rank: int, suit: int) -> bool:
-	for c in cards:
-		if c.rank == rank and c.suit == suit:
-			return true
-	return false

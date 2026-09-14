@@ -31,7 +31,6 @@ var button: int = -1
 var hand_number: int = 0
 var small_blind: int = 10
 var big_blind: int = 20
-var starting_chips: int = 1000
 var blinds_increase_every: int = 8
 var hand_over: bool = true
 var game_over: bool = false
@@ -61,7 +60,6 @@ func setup(defs: Array, p_small_blind: int = 10, p_big_blind: int = 20, seed_val
 		players.append(p)
 	small_blind = p_small_blind
 	big_blind = p_big_blind
-	starting_chips = defs[0].get("chips", 1000) if not defs.is_empty() else 1000
 	deck = Deck.new(seed_value)
 	button = -1
 	hand_number = 0
@@ -156,14 +154,6 @@ func total_pot() -> int:
 	return total
 
 
-## Chips already gathered in the middle (excludes the current street's live bets).
-func middle_pot() -> int:
-	var total := 0
-	for p in players:
-		total += p.committed - p.bet
-	return total
-
-
 func street_name() -> String:
 	return STREET_NAMES[street] if street >= 0 and street < STREET_NAMES.size() else ""
 
@@ -181,6 +171,9 @@ func get_legal_actions() -> Dictionary:
 	var result := {
 		"to_call": to_call,
 		"call_amount": mini(to_call, p.chips),
+		# Folding is always offered, even when a free check is available.
+		# This matches standard online clients (fold is never disabled) and
+		# keeps the engine total: every turn has at least one legal exit.
 		"can_fold": true,
 		"can_check": to_call <= 0,
 		"can_call": to_call > 0 and p.chips > 0,
@@ -209,27 +202,35 @@ func apply(action: String, amount: int = 0) -> Array:
 
 	match action:
 		ACTION_FOLD:
+			if not la.get("can_fold", false):
+				return []
 			p.folded = true
 			p.has_acted = true
 			p.last_action = "Fold"
 			_event({"type": "action", "player": p.id, "action": "fold",
 				"message": "%s %s" % [p.display_name, _pv(p, "fold")]})
 		ACTION_CHECK:
+			if not la.get("can_check", false):
+				return []
 			p.has_acted = true
 			p.last_action = "Check"
 			_event({"type": "action", "player": p.id, "action": "check",
 				"message": "%s %s" % [p.display_name, _pv(p, "check")]})
 		ACTION_CALL:
+			if not la.get("can_call", false):
+				return []
 			var pay: int = mini(la.get("to_call", 0), p.chips)
 			_take_chips(p, pay)
 			p.has_acted = true
 			p.last_action = "Call"
 			var msg := "%s %s %d" % [p.display_name, _pv(p, "call"), pay]
 			if p.all_in:
-				msg = "%s %s all-in for %d" % [p.display_name, _be(p), pay]
+				msg = "%s %s all-in for %d" % [p.display_name, _be(p), p.bet]
 			_event({"type": "action", "player": p.id, "action": "call",
 				"amount": pay, "all_in": p.all_in, "message": msg})
 		ACTION_RAISE:
+			if not la.get("can_raise", false):
+				return []
 			_apply_raise(p, amount, la)
 		_:
 			return []
@@ -247,6 +248,11 @@ func _apply_raise(p: PokerPlayer, amount: int, la: Dictionary) -> void:
 		target = min_to
 	if target > max_to:
 		target = max_to
+	# A raise amount at/below the current bet is not a shove by default: the
+	# clamp above already lifted it to the minimum raise whenever the stack
+	# allows one. Reaching here with target <= current_bet means the player
+	# cannot even make a minimum raise, so the only legal raise is a short
+	# all-in for everything they have left.
 	if target <= current_bet:
 		target = max_to
 
@@ -362,6 +368,7 @@ func _end_hand_by_fold() -> void:
 	_collect_bets()
 	var contenders := _contenders()
 	if contenders.is_empty():
+		push_error("PokerGame._end_hand_by_fold: no contenders left; %d committed chips have no winner" % total_pot())
 		hand_over = true
 		to_act = -1
 		return
@@ -436,6 +443,7 @@ func _build_side_pots() -> Array:
 func _award_pot(pot: Dictionary) -> void:
 	var eligible: Array = pot["eligible"]
 	if eligible.is_empty():
+		push_error("PokerGame._award_pot: pot of %d has no eligible winners" % int(pot.get("amount", 0)))
 		return
 	var best_score := -1
 	var winners: Array = []

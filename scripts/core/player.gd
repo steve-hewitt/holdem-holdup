@@ -75,13 +75,3 @@ func remove_chips(amount: int) -> int:
 	if chips <= 0:
 		chips = 0
 	return taken
-
-
-func status_text() -> String:
-	if out:
-		return "Out"
-	if folded:
-		return "Folded"
-	if all_in:
-		return "All in"
-	return ""

@@ -661,8 +661,6 @@ func show_actions(legal: Dictionary) -> void:
 		_raise_slider.step = _slider_step(lo, hi)
 		_raise_slider.value = lo
 		_update_raise_label()
-	else:
-		_status_label.text = "Your turn"
 
 
 func _slider_step(lo: int, hi: int) -> float:
@@ -696,14 +694,18 @@ func _update_raise_label() -> void:
 func _on_quick_press(kind: float) -> void:
 	if game == null or not _human_can_raise:
 		return
-	var pot := game.total_pot()
 	var target := 0
 	if kind < 0.0:
 		target = int(_raise_slider.max_value)
 	elif kind == 0.0:
 		target = int(_raise_slider.min_value)
 	else:
-		target = game.current_bet + int(pot * kind)
+		# Standard pot-sized raise: match the bet first, then raise by the
+		# pot after your call. total_pot() already holds every committed
+		# chip (including live bets), so only the pending call is added.
+		var hero := game.current_player()
+		var to_call: int = game.current_bet - (hero.bet if hero != null else 0)
+		target = game.current_bet + int((game.total_pot() + to_call) * kind)
 	target = clampi(target, int(_raise_slider.min_value), int(_raise_slider.max_value))
 	_raise_slider.value = target
 	_update_raise_label()
@@ -728,6 +730,20 @@ func _on_raise() -> void:
 	action_chosen.emit({"action": "raise", "amount": int(_raise_slider.value)})
 
 
+## Programmatic equivalent of pressing the action buttons (used by autoplay).
+## The slider must already be configured by show_actions().
+func press_action(action: String, amount: int = 0) -> void:
+	match action:
+		"fold":
+			_on_fold()
+		"raise":
+			_raise_slider.value = clampi(amount,
+				int(_raise_slider.min_value), int(_raise_slider.max_value))
+			_on_raise()
+		_:
+			_on_call()
+
+
 func _lock_actions() -> void:
 	_fold_button.disabled = true
 	_call_button.disabled = true
@@ -744,13 +760,6 @@ func _lock_actions() -> void:
 
 func seat_center(index: int) -> Vector2:
 	return SEAT_ANCHORS[index] * size
-
-
-func _tween(node: Node, prop: String, to: Variant, dur: float, trans: int = Tween.TRANS_QUAD,
-		ease: int = Tween.EASE_OUT) -> Tween:
-	var t := create_tween()
-	t.tween_property(node, prop, to, dur).set_trans(trans).set_ease(ease)
-	return t
 
 
 func animate_deal_hole(pid: int, card: Card, index: int) -> void:

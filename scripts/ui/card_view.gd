@@ -50,11 +50,6 @@ func set_card(new_card: Card, up: bool = true) -> void:
 	queue_redraw()
 
 
-func reveal(up: bool) -> void:
-	face_up = up
-	queue_redraw()
-
-
 func set_highlight(value: bool) -> void:
 	highlighted = value
 	queue_redraw()
@@ -77,6 +72,7 @@ func _draw() -> void:
 		draw_style_box(_back_style, rect)
 		_draw_back(rect)
 	if highlighted:
+		_hl_style.border_color = accent
 		draw_style_box(_hl_style, rect)
 
 

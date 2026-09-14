@@ -107,3 +107,9 @@ func test_full_house_tiebreak() -> void:
 	var nines_full := _eval(["9s", "9h", "9d", "5c", "5s", "2c", "3d"])
 	var fives_full := _eval(["5s", "5h", "5d", "9c", "9s", "2c", "3d"])
 	assert_gt(nines_full["score"], fives_full["score"])
+
+
+func test_undersized_input_returns_invalid() -> void:
+	var result := HandEvaluator.evaluate_best(_hand(["As", "Ks", "Qs"]))
+	assert_eq(result["score"], -1)
+	assert_eq(result["name"], "Invalid")

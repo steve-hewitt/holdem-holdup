@@ -39,7 +39,10 @@ func decide(game: PokerGame, player: PokerPlayer) -> Dictionary:
 	if la["can_check"]:
 		return _decide_when_unbet(la, equity, pot, params)
 
-	# Facing a bet: compare equity to the price of calling.
+	# Facing a bet: compare equity to the price of calling. Note this is an
+	# approximation: total_pot() includes the hero's own committed chips, and
+	# the to-call is only in the denominator. Good enough for a heuristic
+	# opponent; it errs slightly toward tighter folds near all-ins.
 	var pot_odds := float(to_call) / float(pot + to_call)
 	var threshold: float = pot_odds + params["tightness"] - 0.01
 	if equity >= threshold:

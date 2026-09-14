@@ -30,9 +30,12 @@ static func category_name(category: int) -> String:
 	return CATEGORY_NAMES[category] if category >= 0 and category < CATEGORY_NAMES.size() else "?"
 
 
-## Score a set of 5 cards.
+## Score a set of 5 cards. Asserts are stripped from release exports, so an
+## invalid input returns a below-zero "Invalid" result instead of crashing.
 static func evaluate_5(cards: Array) -> Dictionary:
-	assert(cards.size() == 5, "evaluate_5 needs exactly 5 cards")
+	if cards.size() != 5:
+		push_warning("HandEvaluator.evaluate_5 needs exactly 5 cards, got %d" % cards.size())
+		return {"score": -1, "category": -1, "name": "Invalid", "ranks": [], "cards": []}
 	var ranks: Array = []
 	var suits: Array = []
 	for c in cards:
@@ -108,7 +111,10 @@ static func evaluate_5(cards: Array) -> Dictionary:
 
 ## Evaluate the best 5-card hand from 5 to 7 cards.
 static func evaluate_best(cards: Array) -> Dictionary:
-	if cards.size() <= 5:
+	if cards.size() < 5:
+		push_warning("HandEvaluator.evaluate_best needs at least 5 cards, got %d" % cards.size())
+		return {"score": -1, "category": -1, "name": "Invalid", "ranks": [], "cards": []}
+	if cards.size() == 5:
 		return evaluate_5(cards)
 	var best: Dictionary = {}
 	for combo in _five_card_combos(cards.size()):

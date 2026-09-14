@@ -37,13 +37,24 @@ func play(sound: String, pitch: float = 1.0, volume_db: float = -6.0) -> void:
 	if muted:
 		return
 	if not _cache.has(sound):
+		push_warning("SoundBank.play: unknown sound '%s'" % sound)
 		return
-	var player: AudioStreamPlayer = _players[_next]
-	_next = (_next + 1) % _players.size()
+	var player: AudioStreamPlayer = _idle_player()
 	player.stream = _cache[sound]
 	player.pitch_scale = pitch
 	player.volume_db = volume_db
 	player.play()
+
+
+## Prefer a player that is not currently playing so rapid bursts (raise →
+## chip → win) do not truncate each other; fall back to round-robin steal.
+func _idle_player() -> AudioStreamPlayer:
+	for p in _players:
+		if not p.playing:
+			return p
+	var player: AudioStreamPlayer = _players[_next]
+	_next = (_next + 1) % _players.size()
+	return player
 
 
 func _build_sounds() -> void:
