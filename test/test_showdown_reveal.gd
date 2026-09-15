@@ -8,13 +8,13 @@ const BB := 20
 const STACK := 1000
 
 
-func _make_game(count: int = 4, seed_value: int = 777) -> PokerGame:
+func _make_game(count: int = 4, seed_value: int = 777, stack: int = STACK) -> PokerGame:
 	var defs: Array = []
 	for i in range(count):
 		defs.append({
 			"id": i,
 			"name": "P%d" % i,
-			"chips": STACK,
+			"chips": stack,
 			"human": false,
 			"personality": "balanced",
 		})
@@ -171,3 +171,113 @@ func test_card_match_helpers() -> void:
 	assert_false(PokerGame.card_matches(a, other))
 	assert_false(PokerGame.card_matches(a, null))
 	assert_eq(PokerGame.card_indices([other, a, twin], a), [1, 2])
+
+
+func _all_in_types(events: Array) -> Array:
+	var types: Array = []
+	for ev in events:
+		types.append(ev.get("type", ""))
+	return types
+
+
+func test_all_in_runout_exposes_hands() -> void:
+	var game := _make_game(2, 99, 60)
+	game.start_hand()
+	assert_eq(game.current_player().id, 0, "heads-up small blind opens")
+	game.apply("raise", 60)
+	var last: Array = game.apply("call")
+	assert_true(game.hand_over)
+	var types := _all_in_types(last)
+	assert_true(types.has("all_in_showdown"), "exposure opens the runout")
+	var exposure: Dictionary = last[types.find("all_in_showdown")]
+	assert_eq(exposure["players"], [0, 1])
+	assert_eq(game.exposed_ids, [0, 1])
+	for ev in last:
+		if ev.get("type", "") == "street":
+			assert_true(bool(ev.get("runout", false)), "runout streets are flagged")
+	assert_true(types.find("all_in_showdown") < types.find("showdown"))
+	assert_true(types.find("showdown") < types.find("win"))
+
+
+func test_no_exposure_when_board_complete() -> void:
+	var game := _make_game(2, 5, 60)
+	game.start_hand()
+	game.events.clear()
+	game.street = PokerGame.Street.RIVER
+	game.community = [
+		Card.new(14, 0), Card.new(13, 1), Card.new(9, 2),
+		Card.new(5, 3), Card.new(3, 0)]
+	for i in range(2):
+		game.players[i].hole = [Card.new(2 + i, 0), Card.new(7 + i, 1)]
+		game.players[i].chips = 0
+		game.players[i].all_in = true
+		game.players[i].committed = 60
+	game.button = 0
+	game._run_out_and_showdown()
+	assert_false(_all_in_types(game.events).has("all_in_showdown"),
+		"river all-ins go straight to the ordered reveal")
+
+
+func test_no_exposure_when_one_player_live() -> void:
+	var game := _make_game(2, 6, 500)
+	game.start_hand()
+	game.events.clear()
+	game.street = PokerGame.Street.PREFLOP
+	game.community = []
+	game.deck = Deck.new(6)
+	game.players[0].chips = 0
+	game.players[0].all_in = true
+	game.players[0].committed = 100
+	game.players[0].hole = [Card.new(14, 0), Card.new(14, 1)]
+	game.players[1].chips = 400
+	game.players[1].all_in = false
+	game.players[1].committed = 100
+	game.players[1].hole = [Card.new(2, 0), Card.new(7, 1)]
+	game.button = 0
+	game._run_out_and_showdown()
+	assert_true(game.exposed_ids.is_empty(), "a live player keeps cards covered")
+	for ev in game.events:
+		if ev.get("type", "") == "street":
+			assert_false(bool(ev.get("runout", false)))
+
+
+func test_exposed_hands_stay_revealed_in_muck_mode() -> void:
+	var game := _make_game(2, 99, 60)
+	game.showdown_reveal_mode = "muck_losers"
+	game.start_hand()
+	game.apply("raise", 60)
+	game.apply("call")
+	assert_true(game.hand_over)
+	assert_eq(game.revealed_ids.size(), 2, "exposed losers stay face-up")
+	for r in game.showdown_results:
+		assert_true(r.get("revealed", false))
+
+
+func test_human_win_message_uses_base_verb() -> void:
+	var defs: Array = []
+	for i in range(2):
+		defs.append({"id": i, "name": "P%d" % i, "chips": 0, "human": i == 0})
+	var game := PokerGame.new()
+	game.setup(defs, SB, BB, 5)
+	game.events.clear()
+	game.street = PokerGame.Street.RIVER
+	game.community = [
+		Card.new(14, 0), Card.new(13, 1), Card.new(9, 2),
+		Card.new(5, 3), Card.new(3, 0)]
+	game.players[0].hole = [Card.new(14, 1), Card.new(2, 0)]
+	game.players[1].hole = [Card.new(4, 0), Card.new(7, 1)]
+	for i in range(2):
+		game.players[i].out = false
+		game.players[i].chips = 0
+		game.players[i].all_in = true
+		game.players[i].committed = 60
+		game.players[i].folded = false
+	game.button = 0
+	game._do_showdown()
+	var won := false
+	for ev in game.events:
+		if ev.get("type", "") == "win" and int(ev.get("player", -1)) == 0:
+			won = true
+			assert_true(str(ev.get("message", "")).contains("win 120"),
+				"human win message was: %s" % ev.get("message", ""))
+	assert_true(won, "human takes the pot")

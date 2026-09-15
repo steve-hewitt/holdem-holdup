@@ -62,6 +62,11 @@ const PACE := {
 	"street_settle": 0.40,
 	"refund": 0.32,
 	"reveal_stagger": 0.45,
+	"all_in_flip": 0.35,
+	"runout_deal": 0.45,
+	"runout_flop": 0.55,
+	"runout_turn": 0.90,
+	"runout_river": 1.50,
 	"spotlight_hold": 0.90,
 	"showdown_reveal": 0.65,
 	"win": 0.70,
@@ -106,6 +111,7 @@ var pace_scale: float = 1.0
 var _hole_slots: Dictionary = {}       # player id -> Array[Vector2]
 var _community_slots: Array = []
 var _spotlight: Array = []               # CardViews currently lifted for showdown
+var _exposed: Array = []                 # player ids flipped early by all-in runout
 var _pot_value: int = 0
 var _human_can_raise: bool = false
 var _build_done: bool = false
@@ -409,6 +415,9 @@ func _revealed(p: PokerPlayer) -> bool:
 		return false
 	if p.folded:
 		return false
+	# Hands exposed mid-runout stay face-up for the rest of the hand.
+	if _exposed.has(p.id) or game.exposed_ids.has(p.id):
+		return true
 	if not game.revealed_ids.is_empty() and not game.revealed_ids.has(p.id):
 		return false
 	return p.last_hand_name != "" or game.street == PokerGame.Street.SHOWDOWN
@@ -439,22 +448,25 @@ func _reveal_in_order(order: Array, revealed: Array) -> void:
 		if not revealed.has(pid):
 			continue
 		var p: PokerPlayer = game.players[pid]
-		for k in range(_hole_views[pid].size()):
-			if k < p.hole.size():
-				var cv: CardView = _hole_views[pid][k]
-				cv.visible = true
-				cv.set_card(p.hole[k], false)
-		_sync_seats()
-		SoundBank.play("deal", 1.0, -12.0)
-		for k in range(_hole_views[pid].size()):
-			if k < p.hole.size():
-				var cv2: CardView = _hole_views[pid][k]
-				await animate_flip(cv2, p.hole[k])
+		# Runout-exposed hands are already face-up; only announce them.
+		if not _exposed.has(pid):
+			for k in range(_hole_views[pid].size()):
+				if k < p.hole.size():
+					var cv: CardView = _hole_views[pid][k]
+					cv.visible = true
+					cv.set_card(p.hole[k], false)
+			_sync_seats()
+			SoundBank.play("deal", 1.0, -12.0)
+			for k in range(_hole_views[pid].size()):
+				if k < p.hole.size():
+					var cv2: CardView = _hole_views[pid][k]
+					await animate_flip(cv2, p.hole[k])
 		var made := p.last_hand_detail if p.last_hand_detail != "" else p.last_hand_name
+		var verb := "show" if p.is_human else "shows"
 		if made != "":
-			set_status("%s shows %s" % [p.display_name, made])
+			set_status("%s %s %s" % [p.display_name, verb, made])
 		else:
-			set_status("%s shows" % p.display_name)
+			set_status("%s %s" % [p.display_name, verb])
 		await get_tree().create_timer(_pace("reveal_stagger", 0.45), false).timeout
 
 
@@ -523,6 +535,7 @@ func clear_hand_visuals() -> void:
 	_history.clear()
 	_last_recorded = ""
 	_history_label.text = ""
+	_exposed.clear()
 	_clear_spotlight()
 	_community_dealt = 0
 
@@ -598,10 +611,19 @@ func play_events(events: Array) -> void:
 				set_status(_action_message(ev))
 				await get_tree().create_timer(dwell, false).timeout
 			"street":
-				await _deal_community(ev["cards"])
+				var runout := bool(ev.get("runout", false))
+				var street_no := int(ev.get("street", -1))
+				if runout and street_no == PokerGame.Street.RIVER:
+					await show_banner("The river…", GOLD, 1.0)
+				await _deal_community(ev["cards"], runout, street_no)
 				_sync_seats()
-				set_status(ev.get("name", "") + " \u2014 " + _turn_status())
+				set_status(ev.get("name", "") + " — " + _turn_status())
 				await get_tree().create_timer(_pace("street_settle", 0.40), false).timeout
+			"all_in_showdown":
+				var exposed: Array = ev.get("players", [])
+				_sync_seats()
+				await show_banner("All-in! Cards on their backs!", GOLD, 1.2)
+				await _expose_hole_cards(exposed)
 			"refund":
 				animate_chip_flight(POT_CENTER * size, seat_center(ev["player"]), Color("#9ad06a"), 2, 0.3)
 				set_status(ev.get("message", ""))
@@ -659,7 +681,7 @@ func _highlight_winner(pid: int) -> void:
 	_seat_views[pid].set_turn(true)
 
 
-func _deal_community(cards: Array) -> void:
+func _deal_community(cards: Array, runout: bool = false, street_no: int = -1) -> void:
 	for card in cards:
 		if _community_dealt >= _community_views.size():
 			break
@@ -671,10 +693,47 @@ func _deal_community(cards: Array) -> void:
 		cv.position = DECK_ORIGIN * size - cv.size * 0.5
 		cv.set_card(card, false)
 		SoundBank.play("deal", randf_range(0.9, 1.05))
+		var flight := _pace("runout_deal", 0.45) if runout else 0.16
 		var t := create_tween()
-		t.tween_property(cv, "position", target, 0.16).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+		t.tween_property(cv, "position", target, flight).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 		await t.finished
 		await animate_flip(cv, card)
+		if runout:
+			await get_tree().create_timer(_runout_hold(street_no), false).timeout
+
+
+## Sweat dwell after each runout card: the river holds longest.
+func _runout_hold(street_no: int) -> float:
+	match street_no:
+		PokerGame.Street.RIVER:
+			return _pace("runout_river", 1.50)
+		PokerGame.Street.TURN:
+			return _pace("runout_turn", 0.90)
+		_:
+			return _pace("runout_flop", 0.55)
+
+
+## Flip exposed all-in hands face-up without announcing their strength;
+## the runout itself is the drama.
+func _expose_hole_cards(exposed: Array) -> void:
+	if game == null:
+		return
+	for pid in exposed:
+		if not _exposed.has(pid):
+			_exposed.append(pid)
+		var p: PokerPlayer = game.players[pid]
+		for k in range(_hole_views[pid].size()):
+			if k < p.hole.size():
+				var cv: CardView = _hole_views[pid][k]
+				cv.visible = true
+				cv.set_card(p.hole[k], false)
+		_sync_seats()
+		SoundBank.play("deal", 1.0, -12.0)
+		for k in range(_hole_views[pid].size()):
+			if k < p.hole.size():
+				await animate_flip(_hole_views[pid][k], p.hole[k])
+		set_status("%s is all-in — no more bets" % p.display_name, false)
+		await get_tree().create_timer(_pace("all_in_flip", 0.35), false).timeout
 
 
 func _update_hud() -> void:
@@ -910,6 +969,7 @@ func set_waiting(text: String) -> void:
 	_call_button.disabled = true
 	_raise_button.disabled = true
 	_call_button.text = "—"
+	_raise_button.text = "Raise"
 	_raise_slider.visible = false
 	_raise_label.visible = false
 	for b in _quick_buttons:

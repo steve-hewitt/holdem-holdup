@@ -51,6 +51,8 @@ var last_aggressor: int = -1
 ## Showdown reveal order (player ids) and the subset actually flipped face-up.
 var reveal_order: Array = []
 var revealed_ids: Array = []
+## Contenders exposed early by an all-in runout (subset of revealed_ids).
+var exposed_ids: Array = []
 ## Reveal policy override; defaults to the project setting in setup().
 var showdown_reveal_mode: String = REVEAL_SHOW_ALL
 
@@ -79,6 +81,7 @@ func setup(defs: Array, p_small_blind: int = 10, p_big_blind: int = 20, seed_val
 	last_aggressor = -1
 	reveal_order.clear()
 	revealed_ids.clear()
+	exposed_ids.clear()
 	deck = Deck.new(seed_value)
 	button = -1
 	hand_number = 0
@@ -100,6 +103,7 @@ func start_hand() -> Array:
 	last_pots.clear()
 	reveal_order.clear()
 	revealed_ids.clear()
+	exposed_ids.clear()
 	last_aggressor = -1
 	hand_over = false
 
@@ -371,10 +375,30 @@ func _complete_street() -> void:
 
 
 func _run_out_and_showdown() -> void:
+	# Casino rule: when every remaining contender is all-in with board still
+	# to come, hands are exposed before the runout so the table can sweat it.
+	var exposed := _exposed_all_in_ids()
+	exposed_ids = exposed.duplicate()
+	if not exposed.is_empty():
+		_event({"type": "all_in_showdown", "players": exposed})
 	while street < Street.RIVER:
 		street += 1
-		_deal_street_cards()
+		_deal_street_cards(not exposed.is_empty())
 	_do_showdown()
+
+
+## Player ids whose hole cards must be flipped now: every contender is
+## all-in and the board is incomplete. Empty when normal covering applies
+## (someone can still bet, or the board is already out).
+func _exposed_all_in_ids() -> Array:
+	if community.size() >= 5:
+		return []
+	var ids: Array = []
+	for p in _contenders():
+		if not p.all_in:
+			return []
+		ids.append(p.id)
+	return ids if ids.size() > 1 else []
 
 
 func _do_showdown() -> void:
@@ -395,6 +419,8 @@ func _do_showdown() -> void:
 		p.has_acted = true
 		p.net_last = p.won_last - p.committed
 	reveal_order = _compute_reveal_order()
+	# Hands exposed mid-runout stay up no matter the muck policy.
+	revealed_ids = exposed_ids.duplicate()
 	if showdown_reveal_mode == REVEAL_MUCK_LOSERS:
 		revealed_ids.clear()
 		for pid in reveal_order:
@@ -402,6 +428,9 @@ func _do_showdown() -> void:
 				revealed_ids.append(pid)
 	else:
 		revealed_ids = reveal_order.duplicate()
+	for pid in exposed_ids:
+		if not revealed_ids.has(pid):
+			revealed_ids.append(pid)
 	_build_showdown_results()
 	hand_over = true
 	street = Street.SHOWDOWN
@@ -606,7 +635,7 @@ func _post_blind(p: PokerPlayer, amount: int, label: String) -> void:
 	_event({"type": "blind", "player": p.id, "amount": posted, "label": label})
 
 
-func _deal_street_cards() -> void:
+func _deal_street_cards(runout: bool = false) -> void:
 	var count := 3 if street == Street.FLOP else 1
 	var dealt: Array = []
 	for _i in range(count):
@@ -614,7 +643,7 @@ func _deal_street_cards() -> void:
 		community.append(card)
 		dealt.append(card)
 	_event({"type": "street", "street": street, "cards": dealt,
-		"name": street_name()})
+		"name": street_name(), "runout": runout})
 
 
 func _increase_blinds() -> void:
