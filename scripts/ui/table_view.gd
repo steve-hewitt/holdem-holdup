@@ -42,6 +42,25 @@ const BUTTON_CALL := Color("#2f7bd6")
 const BUTTON_RAISE := Color("#d9a83a")
 const BUTTON_NEUTRAL := Color("#3b4750")
 
+const SUIT_SYMBOLS := ["\u2663", "\u2666", "\u2665", "\u2660"]
+
+# Every animation dwell lives here so the whole table can be tuned in one
+# place. Bigger, rarer events hold longer than routine ones.
+const PACE := {
+	"blind": 0.10,
+	"deal_hole": 0.08,
+	"action_fold": 0.24,
+	"action_check": 0.22,
+	"action_call": 0.32,
+	"action_raise": 0.48,
+	"all_in_bonus": 0.30,
+	"street_settle": 0.40,
+	"refund": 0.32,
+	"showdown_reveal": 0.65,
+	"win": 0.70,
+	"hand_end": 0.30,
+}
+
 var game: PokerGame = null
 
 var _seat_views: Array = []
@@ -62,6 +81,17 @@ var _call_button: Button
 var _raise_button: Button
 var _banner_panel: Panel
 var _banner_label: Label
+var _result_panel: Panel
+var _result_title: Label
+var _result_board: Label
+var _result_rows: VBoxContainer
+
+## True while an end-of-hand summary is on screen waiting to advance.
+var awaiting_result: bool = false
+var _result_skipped: bool = false
+
+## Multiplier applied to every PACE dwell (1.0 = default tempo).
+var pace_scale: float = 1.0
 
 var _hole_slots: Dictionary = {}       # player id -> Array[Vector2]
 var _community_slots: Array = []
@@ -121,6 +151,7 @@ func _build() -> void:
 	_build_hud()
 	_build_action_bar()
 	_build_banner()
+	_build_hand_result()
 
 	_notification(NOTIFICATION_RESIZED)
 
@@ -233,6 +264,54 @@ func _build_banner() -> void:
 	_banner_panel.add_child(_banner_label)
 
 
+func _build_hand_result() -> void:
+	_result_panel = Panel.new()
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color("#0a0f12", 0.94)
+	sb.set_corner_radius_all(18)
+	sb.border_color = GOLD
+	sb.set_border_width_all(2)
+	_result_panel.add_theme_stylebox_override("panel", sb)
+	_result_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_result_panel.visible = false
+	add_child(_result_panel)
+
+	var margin := MarginContainer.new()
+	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	margin.add_theme_constant_override("margin_left", 24)
+	margin.add_theme_constant_override("margin_right", 24)
+	margin.add_theme_constant_override("margin_top", 16)
+	margin.add_theme_constant_override("margin_bottom", 16)
+	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_result_panel.add_child(margin)
+
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 6)
+	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	margin.add_child(box)
+
+	_result_title = Label.new()
+	_result_title.add_theme_font_size_override("font_size", 27)
+	_result_title.add_theme_color_override("font_color", GOLD)
+	_result_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_result_title.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	box.add_child(_result_title)
+
+	_result_board = Label.new()
+	_result_board.add_theme_font_size_override("font_size", 18)
+	_result_board.add_theme_color_override("font_color", Color("#c9d6da"))
+	_result_board.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_result_board.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	box.add_child(_result_board)
+
+	box.add_child(HSeparator.new())
+
+	_result_rows = VBoxContainer.new()
+	_result_rows.add_theme_constant_override("separation", 4)
+	_result_rows.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	box.add_child(_result_rows)
+
+
 func _make_button(text: String, base: Color, font_size: int = 20) -> Button:
 	var b := Button.new()
 	b.text = text
@@ -257,6 +336,11 @@ func _button_style(color: Color) -> StyleBoxFlat:
 	sb.content_margin_left = 12
 	sb.content_margin_right = 12
 	return sb
+
+
+## Seconds for a named event, scaled by the table's tempo.
+func _pace(key: String, fallback: float = 0.2) -> float:
+	return float(PACE.get(key, fallback)) * pace_scale
 
 
 # ---------------------------------------------------------------------------
@@ -334,6 +418,8 @@ func clear_hand_visuals() -> void:
 		cv.visible = false
 		cv.set_highlight(false)
 	_banner_panel.visible = false
+	_result_panel.visible = false
+	awaiting_result = false
 	_community_dealt = 0
 
 
@@ -374,40 +460,49 @@ func play_events(events: Array) -> void:
 				_sync_seats()
 				SoundBank.play("chip", randf_range(0.95, 1.05), -10.0)
 				animate_chip_flight(seat_center(pid), POT_CENTER * size, GOLD, 2, 0.3)
-				await get_tree().create_timer(0.08, false).timeout
+				await get_tree().create_timer(_pace("blind", 0.10), false).timeout
 			"deal_hole":
 				var pid2: int = ev["player"]
 				var idx: int = hole_index.get(pid2, 0)
 				hole_index[pid2] = idx + 1
 				animate_deal_hole(pid2, ev["card"], idx)
-				await get_tree().create_timer(0.07, false).timeout
+				await get_tree().create_timer(_pace("deal_hole", 0.08), false).timeout
 			"action":
-				if ev.get("action", "") == "fold":
+				var act: String = ev.get("action", "")
+				var dwell := _pace("action_check", 0.22)
+				if act == "fold":
 					SoundBank.play("fold", randf_range(0.95, 1.05), -9.0)
-				elif ev.get("action", "") == "check":
+					dwell = _pace("action_fold", 0.24)
+				elif act == "check":
 					SoundBank.play("check", randf_range(0.95, 1.05), -10.0)
-				elif ev.get("action", "") == "call":
+					dwell = _pace("action_check", 0.22)
+				elif act == "call":
 					SoundBank.play("chip", randf_range(0.92, 1.0), -8.0)
 					animate_chip_flight(seat_center(ev["player"]), POT_CENTER * size, Color("#5da84c"), 2, 0.3)
-				elif ev.get("action", "") == "raise":
+					dwell = _pace("action_call", 0.32)
+				elif act == "raise":
 					SoundBank.play("raise", randf_range(0.97, 1.05), -8.0)
 					animate_chip_flight(seat_center(ev["player"]), POT_CENTER * size,
 						BUTTON_RAISE, 4, 0.35)
+					dwell = _pace("action_raise", 0.48)
+				if ev.get("all_in", false):
+					dwell += _pace("all_in_bonus", 0.30)
 				_sync_seats()
 				set_status(_action_message(ev))
-				await get_tree().create_timer(0.16, false).timeout
+				await get_tree().create_timer(dwell, false).timeout
 			"street":
 				await _deal_community(ev["cards"])
 				_sync_seats()
 				set_status(ev.get("name", "") + " \u2014 " + _turn_status())
+				await get_tree().create_timer(_pace("street_settle", 0.40), false).timeout
 			"refund":
 				animate_chip_flight(POT_CENTER * size, seat_center(ev["player"]), Color("#9ad06a"), 2, 0.3)
 				set_status(ev.get("message", ""))
 				_sync_seats()
-				await get_tree().create_timer(0.2, false).timeout
+				await get_tree().create_timer(_pace("refund", 0.32), false).timeout
 			"showdown":
 				reveal_showdown()
-				await get_tree().create_timer(0.28, false).timeout
+				await get_tree().create_timer(_pace("showdown_reveal", 0.65), false).timeout
 			"win":
 				var wpid: int = ev["player"]
 				_highlight_winner(wpid)
@@ -415,7 +510,7 @@ func play_events(events: Array) -> void:
 				SoundBank.play("win", randf_range(0.98, 1.04), -6.0)
 				set_status("%s wins %d" % [game.players[wpid].display_name, ev["amount"]])
 				_sync_seats()
-				await get_tree().create_timer(0.28, false).timeout
+				await get_tree().create_timer(_pace("win", 0.70), false).timeout
 			"hand_end":
 				var wpid2: int = ev["winner"]
 				_highlight_winner(wpid2)
@@ -423,7 +518,7 @@ func play_events(events: Array) -> void:
 				SoundBank.play("win", 1.0, -6.0)
 				set_status(ev.get("message", ""))
 				_sync_seats()
-				await get_tree().create_timer(0.24, false).timeout
+				await get_tree().create_timer(_pace("hand_end", 0.30), false).timeout
 			"game_over":
 				pass
 	refresh_all()
@@ -559,6 +654,11 @@ func _layout() -> void:
 	var banner_w := minf(480.0, s.x * 0.42)
 	_banner_panel.size = Vector2(banner_w, 58)
 	_banner_panel.position = Vector2(20, 52)
+
+	# End-of-hand summary, centred over the felt above the action bar.
+	var result_w := minf(560.0, s.x * 0.64)
+	_result_panel.size = Vector2(result_w, 280)
+	_result_panel.position = Vector2((s.x - result_w) * 0.5, s.y * 0.12)
 
 
 # ---------------------------------------------------------------------------
@@ -828,3 +928,129 @@ func show_banner(text: String, color: Color, duration: float = 1.6) -> void:
 	t2.tween_property(_banner_panel, "modulate:a", 0.0, 0.25)
 	await t2.finished
 	_banner_panel.visible = false
+
+
+# ---------------------------------------------------------------------------
+# End-of-hand summary
+# ---------------------------------------------------------------------------
+
+## Reveal the board and every contender's holding, then hold for `seconds` or
+## until the player taps/clicks/presses a key. No-op when running instantly.
+func show_hand_result(seconds: float) -> void:
+	if instant or game == null:
+		return
+	_refresh_result_panel()
+	_result_panel.visible = true
+	_result_panel.modulate.a = 0.0
+	var t := create_tween()
+	t.tween_property(_result_panel, "modulate:a", 1.0, 0.15)
+	await t.finished
+	awaiting_result = true
+	_result_skipped = false
+	var elapsed := 0.0
+	while elapsed < seconds and not _result_skipped:
+		await get_tree().create_timer(0.05, false).timeout
+		elapsed += 0.05
+	awaiting_result = false
+	var t2 := create_tween()
+	t2.tween_property(_result_panel, "modulate:a", 0.0, 0.2)
+	await t2.finished
+	_result_panel.visible = false
+
+
+## Let the player cut the summary short and move on to the next hand.
+func skip_result() -> void:
+	if awaiting_result:
+		_result_skipped = true
+
+
+func _unhandled_input(event: InputEvent) -> void:
+	if not awaiting_result:
+		return
+	var pressed := false
+	if event is InputEventKey:
+		pressed = event.pressed and not event.echo
+	elif event is InputEventMouseButton:
+		pressed = event.pressed
+	elif event is InputEventScreenTouch:
+		pressed = event.pressed
+	if pressed:
+		skip_result()
+		get_viewport().set_input_as_handled()
+
+
+func _refresh_result_panel() -> void:
+	for child in _result_rows.get_children():
+		child.queue_free()
+	_result_board.text = _board_text()
+	if game.showdown_results.is_empty():
+		_refresh_uncontested_result()
+		return
+	var winners: Array = []
+	for r in game.showdown_results:
+		if r.get("won", false):
+			winners.append(r)
+	if winners.size() == 1:
+		var w: Dictionary = winners[0]
+		var wp: PokerPlayer = game.players[int(w["player"])]
+		_result_title.text = "%s %s %d" % [wp.display_name, _win_verb(wp), int(w.get("amount", 0))]
+	elif winners.size() > 1:
+		_result_title.text = "Split pot"
+	else:
+		_result_title.text = "Showdown"
+	for r in game.showdown_results:
+		_add_result_row(r)
+
+
+func _refresh_uncontested_result() -> void:
+	for p in game.players:
+		if p.is_winner:
+			_result_title.text = "%s %s %d" % [p.display_name, _win_verb(p), p.won_last]
+			return
+	_result_title.text = "Hand complete"
+
+
+func _win_verb(p: PokerPlayer) -> String:
+	return "win" if p.is_human else "wins"
+
+
+func _add_result_row(r: Dictionary) -> void:
+	var p: PokerPlayer = game.players[int(r["player"])]
+	var row := HBoxContainer.new()
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var name_label := Label.new()
+	name_label.add_theme_font_size_override("font_size", 19)
+	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	name_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var hand: String = r.get("name", "")
+	name_label.text = "%s  \u2014  %s" % [p.display_name, hand] if hand != "" else p.display_name
+	name_label.add_theme_color_override("font_color",
+		Color("#ffe9b0") if r.get("won", false) else Color("#9fb3bd"))
+	var amount_label := Label.new()
+	amount_label.add_theme_font_size_override("font_size", 19)
+	amount_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	amount_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var net: int = int(r.get("net", 0))
+	amount_label.text = ("+%d" % net) if net >= 0 else str(net)
+	if net > 0:
+		amount_label.add_theme_color_override("font_color", Color("#8fd694"))
+	elif net < 0:
+		amount_label.add_theme_color_override("font_color", Color("#e07060"))
+	else:
+		amount_label.add_theme_color_override("font_color", Color("#9fb3bd"))
+	row.add_child(name_label)
+	row.add_child(amount_label)
+	_result_rows.add_child(row)
+
+
+func _board_text() -> String:
+	if game == null or game.community.is_empty():
+		return ""
+	var parts: Array = []
+	for c in game.community:
+		parts.append(c.rank_label() + _suit_symbol(c.suit))
+	return "  ".join(PackedStringArray(parts))
+
+
+func _suit_symbol(suit: int) -> String:
+	return SUIT_SYMBOLS[suit] if suit >= 0 and suit < SUIT_SYMBOLS.size() else ""

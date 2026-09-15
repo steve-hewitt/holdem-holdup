@@ -121,11 +121,16 @@ func start_hand() -> Array:
 		p.can_raise = true
 
 	var first := _first_preflop_actor(sb_i, bb_i)
-	var nxt := _find_actor(first)
-	if nxt == -1:
+	# Blinds alone can close the betting (e.g. heads-up, small blind all-in for
+	# less than the big blind). Do not hand out an action nobody can use.
+	if _betting_closed():
 		_run_out_and_showdown()
 	else:
-		to_act = nxt
+		var nxt := _find_actor(first)
+		if nxt == -1:
+			_run_out_and_showdown()
+		else:
+			to_act = nxt
 
 	return events.duplicate()
 
@@ -182,7 +187,9 @@ func get_legal_actions() -> Dictionary:
 		"max_raise_to": max_to,
 		"is_all_in_call": to_call >= p.chips,
 	}
-	if p.can_raise and max_to > current_bet:
+	# A raise needs someone who can still call it. Betting into a dry side pot
+	# (every other contender is all-in) is disallowed, matching real rules.
+	if p.can_raise and max_to > current_bet and _opponent_can_call(p):
 		var min_to := current_bet + min_raise
 		if min_to > max_to:
 			min_to = max_to
@@ -310,7 +317,7 @@ func _advance() -> void:
 	if _contenders().size() <= 1:
 		_end_hand_by_fold()
 		return
-	if _all_remaining_all_in():
+	if _betting_closed():
 		_run_out_and_showdown()
 		return
 	var nxt := _find_actor((to_act + 1) % players.size())
@@ -351,13 +358,14 @@ func _do_showdown() -> void:
 	_refund_uncalled()
 	var pots := _build_side_pots()
 	last_pots = pots
-	showdown_results.clear()
 
 	for pot in pots:
 		_award_pot(pot)
 
 	for p in players:
 		p.has_acted = true
+		p.net_last = p.won_last - p.committed
+	_build_showdown_results()
 	hand_over = true
 	street = Street.SHOWDOWN
 	to_act = -1
@@ -366,6 +374,9 @@ func _do_showdown() -> void:
 
 func _end_hand_by_fold() -> void:
 	_collect_bets()
+	# Return the winner's own uncalled chips before awarding the pot, so
+	# won_last / net_last reflect chips actually won from opponents.
+	_refund_uncalled()
 	var contenders := _contenders()
 	if contenders.is_empty():
 		push_error("PokerGame._end_hand_by_fold: no contenders left; %d committed chips have no winner" % total_pot())
@@ -377,6 +388,8 @@ func _end_hand_by_fold() -> void:
 	winner.chips += amount
 	winner.won_last += amount
 	winner.is_winner = true
+	for p in players:
+		p.net_last = p.won_last - p.committed
 	hand_over = true
 	street = Street.COMPLETE
 	to_act = -1
@@ -478,13 +491,23 @@ func _award_pot(pot: Dictionary) -> void:
 		var res: Dictionary = results[i]
 		p.last_hand_name = res["name"]
 		p.last_hand_cards = res["cards"]
+
+
+## One summary row per player who reached showdown (a player eligible for
+## several pots is listed once, with their combined winnings and net result).
+func _build_showdown_results() -> void:
+	showdown_results.clear()
+	for p in players:
+		if p.folded or p.out:
+			continue
 		showdown_results.append({
 			"player": p.id,
-			"name": res["name"],
-			"score": res["score"],
-			"cards": res["cards"],
-			"won": winners.has(i),
+			"name": p.last_hand_name,
+			"score": HandEvaluator.score(p.hole, community),
+			"cards": p.last_hand_cards,
+			"won": p.is_winner,
 			"amount": p.won_last,
+			"net": p.net_last,
 		})
 
 
@@ -551,12 +574,27 @@ func _contenders() -> Array:
 	return result
 
 
-func _all_remaining_all_in() -> bool:
-	var can_act := 0
+## True when at least one other contender still has chips to call a raise.
+func _opponent_can_call(p: PokerPlayer) -> bool:
+	for other in players:
+		if other.id != p.id and other.can_contribute():
+			return true
+	return false
+
+
+## True when betting is finished: every contender is all-in, or at most one
+## can still act and nobody has an outstanding call. A lone player who still
+## owes chips is *not* closed out -- they must be given the chance to call or
+## fold before the board runs out.
+func _betting_closed() -> bool:
+	var actors := 0
 	for p in _contenders():
-		if p.can_contribute():
-			can_act += 1
-	return can_act <= 1
+		if not p.can_contribute():
+			continue
+		if p.bet < current_bet:
+			return false
+		actors += 1
+	return actors <= 1
 
 
 func _next_active_index(from_index: int) -> int:

@@ -375,17 +375,16 @@ func _finish_hand(my_session: int) -> void:
 	if my_session != _session:
 		return
 	var human := game.human_player()
-	if human.is_winner:
-		table.set_status("You win %d!" % human.won_last)
-		if not table.instant:
-			table.show_banner("You win %d" % human.won_last, TableView.GOLD, 1.8)
-		if human.won_last >= game.big_blind * 12:
+	if human.net_last > 0:
+		table.set_status("You win %d!" % human.net_last)
+		if human.net_last >= game.big_blind * 12:
 			SoundBank.play("jackpot", 1.0, -5.0)
 	else:
 		table.set_status("Hand complete")
-	# Reveal opponent hands briefly via their seats is handled by showdown.
-	var wait := 0.0 if _turbo else 2.0
-	await get_tree().create_timer(wait, false).timeout
+	# Reveal the board and every contender's holding, then hold until the
+	# player has had time to absorb the hand (a tap or key skips ahead).
+	var wait := 0.0 if _turbo else _summary_seconds()
+	await table.show_hand_result(wait)
 	if my_session != _session:
 		return
 	if _hands_target > 0 and game.hand_number >= _hands_target:
@@ -394,6 +393,18 @@ func _finish_hand(my_session: int) -> void:
 		get_tree().quit()
 		return
 	_next_hand(my_session)
+
+
+## How long to hold the end-of-hand summary: longer for pots with more players
+## and more chips, clamped so a hand never drags and never flashes past.
+func _summary_seconds() -> float:
+	var contenders := 0
+	for p in game.players:
+		if not p.folded and not p.out:
+			contenders += 1
+	var t := 2.2 + 0.5 * float(contenders)
+	t += clampf(float(game.total_pot()) / 400.0, 0.0, 1.5)
+	return clampf(t, 2.5, 5.0)
 
 
 func _total_chips() -> int:
