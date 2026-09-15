@@ -25,9 +25,69 @@ const CATEGORY_NAMES := [
 
 const _POWERS := [50625, 3375, 225, 15, 1]  # 15^4 .. 15^0
 
+const RANK_PLURALS := {
+	2: "2s", 3: "3s", 4: "4s", 5: "5s", 6: "6s", 7: "7s", 8: "8s",
+	9: "9s", 10: "10s", 11: "Jacks", 12: "Queens", 13: "Kings", 14: "Aces",
+}
+
 
 static func category_name(category: int) -> String:
 	return CATEGORY_NAMES[category] if category >= 0 and category < CATEGORY_NAMES.size() else "?"
+
+
+const RANK_FACE_NAMES := {11: "Jack", 12: "Queen", 13: "King", 14: "Ace"}
+
+
+static func _rank_full(rank: int) -> String:
+	if RANK_FACE_NAMES.has(rank):
+		return RANK_FACE_NAMES[rank]
+	return Card.RANK_NAMES.get(rank, "?")
+
+
+static func _rank_plural(rank: int) -> String:
+	return RANK_PLURALS.get(rank, "?")
+
+
+static func _kicker_suffix(ranks: Array) -> String:
+	if ranks.is_empty():
+		return ""
+	var parts := PackedStringArray()
+	for r in ranks:
+		parts.append(_rank_full(r))
+	var word := "kicker" if parts.size() == 1 else "kickers"
+	return ", %s %s" % ["-".join(parts), word]
+
+
+## A one-line, TV-style description of an evaluated hand, e.g.
+## "Pair of 9s, A-Q-5 kickers" or "Ace-high". Falls back to the plain
+## category name when the result is malformed.
+static func detail(result: Dictionary) -> String:
+	var category: int = result.get("category", -1)
+	var ranks: Array = result.get("ranks", [])
+	if ranks.is_empty():
+		return result.get("name", "?")
+	match category:
+		CAT_HIGH_CARD:
+			return "%s-high" % _rank_full(ranks[0])
+		CAT_PAIR:
+			return "Pair of %s%s" % [_rank_plural(ranks[0]), _kicker_suffix(ranks.slice(1))]
+		CAT_TWO_PAIR:
+			return "%s and %s%s" % [_rank_plural(ranks[0]), _rank_plural(ranks[1]), _kicker_suffix(ranks.slice(2))]
+		CAT_TRIPS:
+			return "Three %s%s" % [_rank_plural(ranks[0]), _kicker_suffix(ranks.slice(1))]
+		CAT_STRAIGHT:
+			return "%s-high Straight" % _rank_full(ranks[0])
+		CAT_FLUSH:
+			return "%s-high Flush" % _rank_full(ranks[0])
+		CAT_FULL_HOUSE:
+			return "%s over %s" % [_rank_plural(ranks[0]), _rank_plural(ranks[1])]
+		CAT_QUADS:
+			return "Four %s%s" % [_rank_plural(ranks[0]), _kicker_suffix(ranks.slice(1))]
+		CAT_STRAIGHT_FLUSH:
+			if ranks[0] == 14:
+				return "Royal Flush"
+			return "%s-high Straight Flush" % _rank_full(ranks[0])
+	return result.get("name", "?")
 
 
 ## Score a set of 5 cards. Asserts are stripped from release exports, so an

@@ -499,3 +499,38 @@ func test_short_small_blind_all_in_closes_betting_at_deal() -> void:
 	assert_eq(game.current_bet, 20)
 	assert_true(game.hand_over, "Betting is closed once the only opponent is all-in")
 	assert_eq(game.community.size(), 5, "The board runs out to a showdown")
+
+
+func test_ai_raise_message_agrees() -> void:
+	var game := _make_game(4)
+	game.start_hand()
+	# Seat 3 opens preflop and is AI; a raise must read "raises to", not "raise tos".
+	assert_eq(game.current_player().id, 3)
+	var events := game.apply("raise", 60)
+	assert_false(events.is_empty())
+	assert_true(str(events[0].get("message", "")).contains("raises to 60"),
+		"AI raise message was: %s" % events[0].get("message", ""))
+
+
+func test_blind_labels_clear_on_new_street() -> void:
+	var game := _make_game(4)
+	game.start_hand()
+	var sb_seen := false
+	for p in game.players:
+		if p.last_action == "Small blind":
+			sb_seen = true
+	assert_true(sb_seen, "blinds tag the opener preflop")
+	var guard := 0
+	while not game.hand_over and game.street == PokerGame.Street.PREFLOP and guard < 50:
+		guard += 1
+		var la := game.get_legal_actions()
+		if la.get("can_check", false):
+			game.apply("check")
+		elif la.get("can_call", false):
+			game.apply("call")
+		else:
+			game.apply("fold")
+	if game.street != PokerGame.Street.PREFLOP and not game.hand_over:
+		for p in game.players:
+			assert_false(p.last_action == "Small blind" or p.last_action == "Big blind",
+				"blind tags do not leak past preflop")

@@ -64,6 +64,8 @@ hundreds of self-played hands, and AI decision legality.
 
 Pass after `--`, e.g. `godot --path . -- --autoplay`:
 `--autoplay`, `--turbo`, `--hands=N`, `--shot=path.png --frames=N`,
-`--shot-title=path.png`, `--shot=path.png --shot-screen=pause|result`.
+`--shot-title=path.png`, `--shot=path.png --shot-screen=pause|result`,
+`--showdown=show-all|muck` (showdown reveal policy; default `show_all`, also
+settable via the `holdem_holdup/showdown_reveal` project setting).
 
 Issue tracking is handled by [Beads](https://github.com/steveyegge/beads) (`bd`).
