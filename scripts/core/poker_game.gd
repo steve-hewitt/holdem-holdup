@@ -383,8 +383,13 @@ func _do_showdown() -> void:
 	var pots := _build_side_pots()
 	last_pots = pots
 
+	# Award the pots now for accounting, but hold the win events until after
+	# the showdown reveal so chips visually stay in the pot while hands show.
+	var wins_from := events.size()
 	for pot in pots:
 		_award_pot(pot)
+	var wins := events.slice(wins_from)
+	events.resize(wins_from)
 
 	for p in players:
 		p.has_acted = true
@@ -404,6 +409,8 @@ func _do_showdown() -> void:
 	_event({"type": "showdown", "results": showdown_results.duplicate(),
 		"pots": pots, "reveal_order": reveal_order.duplicate(),
 		"revealed": revealed_ids.duplicate()})
+	for w in wins:
+		events.append(w)
 
 
 ## Real-poker reveal order: the last aggressor on the final betting round
@@ -568,6 +575,7 @@ func _build_showdown_results() -> void:
 			"revealed": revealed_ids.has(p.id),
 			"amount": p.won_last,
 			"gross": p.won_last,
+			"committed": p.committed,
 			"net": p.net_last,
 		})
 
@@ -641,6 +649,14 @@ func _opponent_can_call(p: PokerPlayer) -> bool:
 		if other.id != p.id and other.can_contribute():
 			return true
 	return false
+
+
+## Standard pot-sized raise target: call the current bet first, then raise
+## the resulting pot. kind 1.0 = full pot, 0.5 = half pot. The result is a
+## raise-TO amount, truncated to whole chips and clamped to [lo, hi].
+static func pot_raise_target(current_bet: int, total_pot: int, to_call: int, kind: float, lo: int, hi: int) -> int:
+	var target := current_bet + int((total_pot + to_call) * kind)
+	return clampi(target, lo, hi)
 
 
 ## True when betting is finished: every contender is all-in, or at most one

@@ -383,7 +383,7 @@ func _finish_hand(my_session: int) -> void:
 		return
 	var human := game.human_player()
 	if human.net_last > 0:
-		table.set_status("You win %d!" % human.net_last)
+		table.set_status("You win %d!" % human.won_last)
 		if human.net_last >= game.big_blind * 12:
 			SoundBank.play("jackpot", 1.0, -5.0)
 	else:

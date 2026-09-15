@@ -534,3 +534,69 @@ func test_blind_labels_clear_on_new_street() -> void:
 		for p in game.players:
 			assert_false(p.last_action == "Small blind" or p.last_action == "Big blind",
 				"blind tags do not leak past preflop")
+
+
+func test_pot_raise_targets() -> void:
+	# Preflop, blinds 10/20: pot 30, facing 20. Call (pot 50), raise 50 -> 70.
+	assert_eq(PokerGame.pot_raise_target(20, 30, 20, 1.0, 40, 1000), 70)
+	assert_eq(PokerGame.pot_raise_target(20, 30, 20, 0.5, 40, 1000), 45)
+	# Flop, pot 100, bet 40: call (pot 140), raise 140 -> 180; half -> 110.
+	assert_eq(PokerGame.pot_raise_target(40, 100, 40, 1.0, 80, 1000), 180)
+	assert_eq(PokerGame.pot_raise_target(40, 100, 40, 0.5, 80, 1000), 110)
+	# Opening into an empty street: pot bet, half pot.
+	assert_eq(PokerGame.pot_raise_target(0, 60, 0, 1.0, 20, 1000), 60)
+	assert_eq(PokerGame.pot_raise_target(0, 60, 0, 0.5, 20, 1000), 30)
+	# Clamped to the legal window.
+	assert_eq(PokerGame.pot_raise_target(20, 30, 20, 1.0, 100, 1000), 100)
+	assert_eq(PokerGame.pot_raise_target(40, 100, 40, 1.0, 80, 150), 150)
+
+
+func test_showdown_event_comes_before_win_events() -> void:
+	var game := _make_game(4)
+	game.start_hand()
+	var last: Array = []
+	var guard := 0
+	while not game.hand_over and guard < 200:
+		guard += 1
+		var la := game.get_legal_actions()
+		if la.get("can_check", false):
+			last = game.apply("check")
+		elif la.get("can_call", false):
+			last = game.apply("call")
+		else:
+			last = game.apply("fold")
+	assert_eq(game.street, PokerGame.Street.SHOWDOWN)
+	var types: Array = []
+	for ev in last:
+		types.append(ev.get("type", ""))
+	var showdown_idx := types.find("showdown")
+	assert_gt(showdown_idx, -1, "final batch contains the showdown event")
+	assert_true(types.has("win"), "final batch pays the winners")
+	for i in range(types.size()):
+		if types[i] == "win":
+			assert_gt(i, showdown_idx, "chips move only after the reveal")
+
+
+func test_showdown_rows_carry_gross_and_committed() -> void:
+	var game := _make_game(4)
+	game.start_hand()
+	var guard := 0
+	while not game.hand_over and guard < 200:
+		guard += 1
+		var la := game.get_legal_actions()
+		if la.get("can_check", false):
+			game.apply("check")
+		elif la.get("can_call", false):
+			game.apply("call")
+		else:
+			game.apply("fold")
+	assert_eq(game.street, PokerGame.Street.SHOWDOWN)
+	for r in game.showdown_results:
+		var p: PokerPlayer = game.players[int(r["player"])]
+		assert_eq(int(r["gross"]), p.won_last, "gross is what the pot paid")
+		assert_eq(int(r["committed"]), p.committed, "row carries chips put in")
+		if r.get("won", false):
+			assert_gt(int(r["gross"]), 0)
+		else:
+			assert_eq(int(r["gross"]), 0, "losers are paid nothing")
+			assert_gt(int(r["committed"]), 0, "losers still show their buy-in")

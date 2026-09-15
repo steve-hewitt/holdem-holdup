@@ -542,6 +542,7 @@ func _sync_seats() -> void:
 		_seat_views[i].set_dealer(i == game.button)
 	if game.hand_over:
 		_call_button.text = "—"
+		_raise_button.text = "Raise"
 	_pot_value = game.total_pot()
 	_update_hud()
 	queue_redraw()
@@ -921,8 +922,11 @@ func _on_raise_slider_changed(_value: float) -> void:
 
 
 func _update_raise_label() -> void:
+	var to := int(_raise_slider.value)
 	var verb := "Raise to" if game != null and game.current_bet > 0 else "Bet"
-	_raise_label.text = "%s %d" % [verb, int(_raise_slider.value)]
+	_raise_label.text = "%s %s" % [verb, _fmt(to)]
+	if _human_can_raise:
+		_raise_button.text = "%s %s" % [verb, _fmt(to)]
 
 
 func _on_quick_press(kind: float) -> void:
@@ -939,7 +943,8 @@ func _on_quick_press(kind: float) -> void:
 		# chip (including live bets), so only the pending call is added.
 		var hero := game.current_player()
 		var to_call: int = game.current_bet - (hero.bet if hero != null else 0)
-		target = game.current_bet + int((game.total_pot() + to_call) * kind)
+		target = PokerGame.pot_raise_target(game.current_bet, game.total_pot(),
+			to_call, kind, int(_raise_slider.min_value), int(_raise_slider.max_value))
 	target = clampi(target, int(_raise_slider.min_value), int(_raise_slider.max_value))
 	_raise_slider.value = target
 	_update_raise_label()
@@ -1180,27 +1185,22 @@ func _add_result_row(r: Dictionary) -> void:
 	amount_label.add_theme_font_size_override("font_size", 18)
 	amount_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	amount_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var net: int = int(r.get("net", 0))
+	# Gross chip movement only: winners show what the pot paid them, losers
+	# show what they put in.
 	var gross: int = int(r.get("gross", r.get("amount", 0)))
-	if r.get("won", false) and gross != net:
-		amount_label.text = "+%s (%s net)" % [_fmt(gross), _signed(net)]
-	elif net > 0:
-		amount_label.text = "+%s" % _fmt(net)
-	else:
-		amount_label.text = _signed(net)
-	if net > 0:
+	var lost: int = int(r.get("committed", 0))
+	if r.get("won", false):
+		amount_label.text = "+%s" % _fmt(gross)
 		amount_label.add_theme_color_override("font_color", Color("#8fd694"))
-	elif net < 0:
+	elif lost > 0:
+		amount_label.text = "-%s" % _fmt(lost)
 		amount_label.add_theme_color_override("font_color", Color("#e07060"))
 	else:
+		amount_label.text = "—"
 		amount_label.add_theme_color_override("font_color", Color("#9fb3bd"))
 	row.add_child(name_label)
 	row.add_child(amount_label)
 	_result_rows.add_child(row)
-
-
-func _signed(amount: int) -> String:
-	return "+%s" % _fmt(amount) if amount >= 0 else _fmt(amount)
 
 
 ## One small line per side pot so split/odd-chip awards are not a mystery.
