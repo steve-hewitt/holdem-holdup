@@ -7,6 +7,18 @@ var card: Card = null
 var face_up: bool = false
 var highlighted: bool = false
 var accent: Color = Color("#e8b64c")
+## Opaque fade (e.g. folded hands). Implemented as muted palette colors
+## rather than modulate alpha so overlapping shapes never double-darken.
+var dimmed: bool = false
+
+const FACE_BG := Color("#fcfbf6")
+const FACE_BORDER := Color("#d9d4c6")
+const BACK_BG := Color("#2b3f78")
+const BACK_BORDER := Color("#e9edff")
+const BACK_INNER_BG := Color("#3a53a0")
+const BACK_INNER_BORDER := Color(1, 1, 1, 0.35)
+const DIM_MIX := Color("#8a8f96")
+const DIM_AMOUNT := 0.55
 
 var _face_style: StyleBoxFlat
 var _back_style: StyleBoxFlat
@@ -18,24 +30,24 @@ var _last_size := Vector2.ZERO
 func _init() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_face_style = StyleBoxFlat.new()
-	_face_style.bg_color = Color("#fcfbf6")
-	_face_style.border_color = Color("#d9d4c6")
+	_face_style.bg_color = FACE_BG
+	_face_style.border_color = FACE_BORDER
 	_face_style.set_border_width_all(2)
 	_face_style.shadow_color = Color(0, 0, 0, 0.35)
 	_face_style.shadow_size = 6
 	_face_style.shadow_offset = Vector2(0, 3)
 
 	_back_style = StyleBoxFlat.new()
-	_back_style.bg_color = Color("#2b3f78")
-	_back_style.border_color = Color("#e9edff")
+	_back_style.bg_color = BACK_BG
+	_back_style.border_color = BACK_BORDER
 	_back_style.set_border_width_all(3)
 	_back_style.shadow_color = Color(0, 0, 0, 0.35)
 	_back_style.shadow_size = 6
 	_back_style.shadow_offset = Vector2(0, 3)
 
 	_back_inner = StyleBoxFlat.new()
-	_back_inner.bg_color = Color("#3a53a0")
-	_back_inner.border_color = Color(1, 1, 1, 0.35)
+	_back_inner.bg_color = BACK_INNER_BG
+	_back_inner.border_color = BACK_INNER_BORDER
 	_back_inner.set_border_width_all(2)
 
 	_hl_style = StyleBoxFlat.new()
@@ -53,6 +65,29 @@ func set_card(new_card: Card, up: bool = true) -> void:
 func set_highlight(value: bool) -> void:
 	highlighted = value
 	queue_redraw()
+
+
+func set_dimmed(value: bool) -> void:
+	if dimmed == value:
+		return
+	dimmed = value
+	_face_style.bg_color = _tone(FACE_BG)
+	_face_style.border_color = _tone(FACE_BORDER)
+	_back_style.bg_color = _tone(BACK_BG)
+	_back_style.border_color = _tone(BACK_BORDER)
+	_back_inner.bg_color = _tone(BACK_INNER_BG)
+	_back_inner.border_color = _tone(BACK_INNER_BORDER)
+	queue_redraw()
+
+
+## Push a color toward neutral gray (keeping its alpha) for the dimmed
+## palette. Fully opaque, so overlaps stay clean.
+func _tone(c: Color) -> Color:
+	if not dimmed:
+		return c
+	var m := c.lerp(DIM_MIX, DIM_AMOUNT)
+	m.a = c.a
+	return m
 
 
 func _notification(what: int) -> void:
@@ -88,7 +123,7 @@ func _sync_styles() -> void:
 
 
 func _draw_face(rect: Rect2) -> void:
-	var color := card.color()
+	var color := _tone(card.color())
 	var font := get_theme_default_font()
 	var rank_size := int(size.y * 0.26)
 	var corner_suit_r := size.y * 0.075
@@ -113,7 +148,7 @@ func _draw_face(rect: Rect2) -> void:
 func _draw_back(rect: Rect2) -> void:
 	var inset := rect.grow(-size.x * 0.13)
 	draw_style_box(_back_inner, inset)
-	_draw_suit(rect.get_center(), size.y * 0.20, Card.SUIT_SPADES, Color(1, 1, 1, 0.22))
+	_draw_suit(rect.get_center(), size.y * 0.20, Card.SUIT_SPADES, _tone(Color(1, 1, 1, 0.22)))
 
 
 func _draw_suit(center: Vector2, r: float, suit: int, color: Color) -> void:

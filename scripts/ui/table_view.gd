@@ -392,7 +392,8 @@ func refresh_all() -> void:
 				cv.visible = true
 				cv.set_card(p.hole[k], p.is_human or _revealed(p))
 				cv.position = _hole_slots[i][k] - cv.size * 0.5
-				cv.modulate = Color(1, 1, 1, 0.45) if p.folded else Color(1, 1, 1, 1)
+				cv.modulate = Color.WHITE
+				cv.set_dimmed(p.folded)
 			else:
 				cv.visible = false
 	# Community
@@ -1070,6 +1071,7 @@ func animate_deal_hole(pid: int, card: Card, index: int) -> void:
 	cv.position = DECK_ORIGIN * size - cv.size * 0.5
 	cv.scale = Vector2(0.3, 0.3)
 	cv.modulate = Color.WHITE
+	cv.set_dimmed(false)
 	cv.set_card(card, game.players[pid].is_human)
 	SoundBank.play("deal", randf_range(0.92, 1.08))
 	var t := create_tween()
@@ -1245,15 +1247,15 @@ func _add_result_row(r: Dictionary) -> void:
 	amount_label.add_theme_font_size_override("font_size", 18)
 	amount_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	amount_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	# Gross chip movement only: winners show what the pot paid them, losers
-	# show what they put in.
+	# Gross chip movement as bare numbers: what the winner is paid, and
+	# what everyone else put in. Color and the title say who gets it.
 	var gross: int = int(r.get("gross", r.get("amount", 0)))
 	var lost: int = int(r.get("committed", 0))
 	if r.get("won", false):
-		amount_label.text = "+%s" % _fmt(gross)
+		amount_label.text = _fmt(gross)
 		amount_label.add_theme_color_override("font_color", Color("#8fd694"))
 	elif lost > 0:
-		amount_label.text = "-%s" % _fmt(lost)
+		amount_label.text = _fmt(lost)
 		amount_label.add_theme_color_override("font_color", Color("#e07060"))
 	else:
 		amount_label.text = "—"

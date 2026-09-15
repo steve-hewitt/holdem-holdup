@@ -78,3 +78,40 @@ func test_runout_community_arrives_face_up() -> void:
 	var cv: CardView = table._community_views[3]
 	assert_true(cv.visible)
 	assert_true(cv.face_up, "runout river arrives face-up")
+
+
+func test_folded_cards_dim_opaque() -> void:
+	var table := _make_table()
+	var game := _make_exposed_game()
+	game.players[2].hole = [Card.new(9, 0), Card.new(9, 1)]
+	table.set_game(game)
+	table.refresh_all()
+	var folded_cv: CardView = table._hole_views[2][0]
+	assert_true(folded_cv.dimmed, "folded hole reads dimmed")
+	assert_eq(folded_cv.modulate, Color.WHITE, "dim is opaque, never alpha")
+	var live_cv: CardView = table._hole_views[0][0]
+	assert_false(live_cv.dimmed)
+	assert_eq(live_cv.modulate, Color.WHITE)
+
+
+func test_recap_rows_show_bare_numbers() -> void:
+	var table := _make_table()
+	var game := _make_exposed_game()
+	game.community = [Card.new(5, 0), Card.new(9, 1), Card.new(12, 2)]
+	game.showdown_results = [
+		{"player": 0, "name": "One Pair", "detail": "Pair of 9s",
+			"hole": [Card.new(9, 3), Card.new(4, 0)], "best5": [],
+			"won": true, "revealed": true, "gross": 920, "committed": 450},
+		{"player": 1, "name": "High Card", "detail": "Ace-high",
+			"hole": [Card.new(14, 2), Card.new(7, 0)], "best5": [],
+			"won": false, "revealed": true, "gross": 0, "committed": 450},
+	]
+	table.set_game(game)
+	table._refresh_result_panel()
+	var amounts: Array = []
+	for row in table._result_rows.get_children():
+		if row is HBoxContainer:
+			amounts.append((row.get_child(1) as Label).text)
+	assert_eq(amounts, ["920", "450"])
+	for text in amounts:
+		assert_false("+" in text or text.begins_with("-"), "no signs: %s" % text)
