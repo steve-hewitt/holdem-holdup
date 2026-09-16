@@ -8,6 +8,13 @@ var face_up: bool = false
 var highlighted: bool = false
 var accent: Color = Color("#e8b64c")
 
+const FACE_BG := Color("#fcfbf6")
+const FACE_BORDER := Color("#d9d4c6")
+const BACK_BG := Color("#2b3f78")
+const BACK_BORDER := Color("#e9edff")
+const BACK_INNER_BG := Color("#3a53a0")
+const BACK_INNER_BORDER := Color(1, 1, 1, 0.35)
+
 var _face_style: StyleBoxFlat
 var _back_style: StyleBoxFlat
 var _back_inner: StyleBoxFlat
@@ -18,24 +25,24 @@ var _last_size := Vector2.ZERO
 func _init() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_face_style = StyleBoxFlat.new()
-	_face_style.bg_color = Color("#fcfbf6")
-	_face_style.border_color = Color("#d9d4c6")
+	_face_style.bg_color = FACE_BG
+	_face_style.border_color = FACE_BORDER
 	_face_style.set_border_width_all(2)
 	_face_style.shadow_color = Color(0, 0, 0, 0.35)
 	_face_style.shadow_size = 6
 	_face_style.shadow_offset = Vector2(0, 3)
 
 	_back_style = StyleBoxFlat.new()
-	_back_style.bg_color = Color("#2b3f78")
-	_back_style.border_color = Color("#e9edff")
+	_back_style.bg_color = BACK_BG
+	_back_style.border_color = BACK_BORDER
 	_back_style.set_border_width_all(3)
 	_back_style.shadow_color = Color(0, 0, 0, 0.35)
 	_back_style.shadow_size = 6
 	_back_style.shadow_offset = Vector2(0, 3)
 
 	_back_inner = StyleBoxFlat.new()
-	_back_inner.bg_color = Color("#3a53a0")
-	_back_inner.border_color = Color(1, 1, 1, 0.35)
+	_back_inner.bg_color = BACK_INNER_BG
+	_back_inner.border_color = BACK_INNER_BORDER
 	_back_inner.set_border_width_all(2)
 
 	_hl_style = StyleBoxFlat.new()

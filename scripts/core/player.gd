@@ -21,6 +21,7 @@ var out: bool = false     # eliminated from the game (no chips at hand start)
 
 var last_action: String = ""
 var last_hand_name: String = ""
+var last_hand_detail: String = ""
 var last_hand_cards: Array = []
 var won_last: int = 0
 var net_last: int = 0      # chips won minus chips put in, for the finished hand
@@ -44,6 +45,7 @@ func reset_for_hand() -> void:
 	can_raise = true
 	last_action = ""
 	last_hand_name = ""
+	last_hand_detail = ""
 	last_hand_cards.clear()
 	won_last = 0
 	net_last = 0
@@ -56,6 +58,7 @@ func reset_for_street() -> void:
 	bet = 0
 	has_acted = false
 	can_raise = true
+	last_action = ""
 
 
 ## A player is still contesting the pot: not folded and not eliminated.

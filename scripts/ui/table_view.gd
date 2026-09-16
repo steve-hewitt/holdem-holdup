@@ -18,13 +18,13 @@ const SEAT_ANCHORS := [
 	Vector2(0.875, 0.400),  # seat 3: right
 ]
 const HOLE_ANCHORS := [
-	Vector2(0.50, 0.585),
+	Vector2(0.50, 0.578),
 	Vector2(0.265, 0.400),
-	Vector2(0.50, 0.180),
+	Vector2(0.50, 0.212),
 	Vector2(0.735, 0.400),
 ]
 const COMMUNITY_CENTER := Vector2(0.50, 0.405)
-const POT_CENTER := Vector2(0.50, 0.283)
+const POT_CENTER := Vector2(0.50, 0.315)
 const DECK_ORIGIN := Vector2(0.50, 0.325)
 
 const SEAT_SIZE := Vector2(228, 96)
@@ -44,6 +44,11 @@ const BUTTON_NEUTRAL := Color("#3b4750")
 
 const SUIT_SYMBOLS := ["\u2663", "\u2666", "\u2665", "\u2660"]
 
+## How far winning / losing showdown cards lift off the felt to mark the
+## 5-card scoring hand.
+const SPOTLIGHT_WIN_LIFT := 14.0
+const SPOTLIGHT_LOSE_LIFT := 8.0
+
 # Every animation dwell lives here so the whole table can be tuned in one
 # place. Bigger, rarer events hold longer than routine ones.
 const PACE := {
@@ -53,9 +58,17 @@ const PACE := {
 	"action_check": 0.22,
 	"action_call": 0.32,
 	"action_raise": 0.48,
+	"fold_discard": 0.30,
 	"all_in_bonus": 0.30,
 	"street_settle": 0.40,
 	"refund": 0.32,
+	"reveal_stagger": 0.45,
+	"all_in_flip": 0.35,
+	"runout_deal": 0.45,
+	"runout_flop": 0.55,
+	"runout_turn": 0.90,
+	"runout_river": 1.50,
+	"spotlight_hold": 0.90,
 	"showdown_reveal": 0.65,
 	"win": 0.70,
 	"hand_end": 0.30,
@@ -73,6 +86,9 @@ var _mute_button: Button
 var _menu_button: Button
 var _action_panel: Panel
 var _status_label: Label
+var _history_label: Label
+var _history: Array = []
+var _last_recorded: String = ""
 var _raise_label: Label
 var _raise_slider: HSlider
 var _quick_buttons: Array = []
@@ -95,6 +111,8 @@ var pace_scale: float = 1.0
 
 var _hole_slots: Dictionary = {}       # player id -> Array[Vector2]
 var _community_slots: Array = []
+var _spotlight: Array = []               # CardViews currently lifted for showdown
+var _exposed: Array = []                 # player ids flipped early by all-in runout
 var _pot_value: int = 0
 var _human_can_raise: bool = false
 var _build_done: bool = false
@@ -190,6 +208,12 @@ func _build_action_bar() -> void:
 	_status_label.add_theme_color_override("font_color", Color("#c9d6da"))
 	_action_panel.add_child(_status_label)
 
+	_history_label = Label.new()
+	_history_label.add_theme_font_size_override("font_size", 15)
+	_history_label.add_theme_color_override("font_color", Color("#7d8f97"))
+	_history_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_action_panel.add_child(_history_label)
+
 	_raise_label = Label.new()
 	_raise_label.add_theme_font_size_override("font_size", 20)
 	_raise_label.add_theme_color_override("font_color", GOLD)
@@ -200,15 +224,15 @@ func _build_action_bar() -> void:
 	_raise_slider.max_value = 100
 	_raise_slider.step = 5
 	var track := StyleBoxFlat.new()
-	track.bg_color = Color("#26323a")
-	track.set_corner_radius_all(6)
-	track.content_margin_top = 7
-	track.content_margin_bottom = 7
+	track.bg_color = Color("#31414c")
+	track.set_corner_radius_all(8)
+	track.content_margin_top = 10
+	track.content_margin_bottom = 10
 	var fill := StyleBoxFlat.new()
 	fill.bg_color = GOLD
-	fill.set_corner_radius_all(6)
-	fill.content_margin_top = 7
-	fill.content_margin_bottom = 7
+	fill.set_corner_radius_all(8)
+	fill.content_margin_top = 10
+	fill.content_margin_bottom = 10
 	_raise_slider.add_theme_stylebox_override("slider", track)
 	_raise_slider.add_theme_stylebox_override("grabber_area", fill)
 	_raise_slider.add_theme_stylebox_override("grabber_area_highlight", fill)
@@ -267,7 +291,7 @@ func _build_banner() -> void:
 func _build_hand_result() -> void:
 	_result_panel = Panel.new()
 	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color("#0a0f12", 0.94)
+	sb.bg_color = Color("#0a0f12", 0.97)
 	sb.set_corner_radius_all(18)
 	sb.border_color = GOLD
 	sb.set_border_width_all(2)
@@ -362,14 +386,18 @@ func refresh_all() -> void:
 		_seat_views[i].bind(p)
 		_seat_views[i].set_turn(i == game.to_act and not game.hand_over)
 		_seat_views[i].set_dealer(i == game.button)
-		# Hole cards
+		# Hole cards. A folded hand is thrown in, so it leaves the felt.
 		for k in range(_hole_views[i].size()):
 			var cv: CardView = _hole_views[i][k]
-			if k < p.hole.size() and not p.out:
+			if k < p.hole.size() and not p.out and not p.folded:
 				cv.visible = true
 				cv.set_card(p.hole[k], p.is_human or _revealed(p))
 				cv.position = _hole_slots[i][k] - cv.size * 0.5
-				cv.modulate = Color(1, 1, 1, 0.45) if p.folded else Color(1, 1, 1, 1)
+				if _spotlight.has(cv) and cv.has_meta("spot_lift"):
+					var lift: float = float(cv.get_meta("spot_lift", 0.0))
+					cv.set_meta("base_pos", cv.position)
+					cv.position = cv.position + Vector2(0, -lift)
+				cv.modulate = Color.WHITE
 			else:
 				cv.visible = false
 	# Community
@@ -379,6 +407,10 @@ func refresh_all() -> void:
 			cv.visible = true
 			cv.set_card(game.community[k], true)
 			cv.position = _community_slots[k] - cv.size * 0.5
+			if _spotlight.has(cv) and cv.has_meta("spot_lift"):
+				var lift2: float = float(cv.get_meta("spot_lift", 0.0))
+				cv.set_meta("base_pos", cv.position)
+				cv.position = cv.position + Vector2(0, -lift2)
 		else:
 			cv.visible = false
 	_community_dealt = game.community.size()
@@ -392,6 +424,11 @@ func _revealed(p: PokerPlayer) -> bool:
 		return false
 	if p.folded:
 		return false
+	# Hands exposed mid-runout stay face-up for the rest of the hand.
+	if _exposed.has(p.id) or game.exposed_ids.has(p.id):
+		return true
+	if not game.revealed_ids.is_empty() and not game.revealed_ids.has(p.id):
+		return false
 	return p.last_hand_name != "" or game.street == PokerGame.Street.SHOWDOWN
 
 
@@ -402,6 +439,8 @@ func reveal_showdown() -> void:
 		var p: PokerPlayer = game.players[i]
 		if p.folded or p.out:
 			continue
+		if not _revealed(p):
+			continue
 		for k in range(_hole_views[i].size()):
 			if k < p.hole.size():
 				var cv: CardView = _hole_views[i][k]
@@ -409,17 +448,123 @@ func reveal_showdown() -> void:
 				cv.set_card(p.hole[k], true)
 
 
+## Flip each revealed hand face-up in real-poker reveal order, announcing the
+## made hand as it shows. Mucked hands stay face-down.
+func _reveal_in_order(order: Array, revealed: Array) -> void:
+	if game == null:
+		return
+	for pid in order:
+		if not revealed.has(pid):
+			continue
+		var p: PokerPlayer = game.players[pid]
+		# Runout-exposed hands are already face-up; only announce them.
+		if not _exposed.has(pid) and not game.exposed_ids.has(pid):
+			for k in range(_hole_views[pid].size()):
+				if k < p.hole.size():
+					var cv: CardView = _hole_views[pid][k]
+					cv.visible = true
+					if cv.face_up and PokerGame.card_matches(cv.card, p.hole[k]):
+						continue
+					cv.set_card(p.hole[k], false)
+			_sync_seats()
+			SoundBank.play("deal", 1.0, -12.0)
+			for k in range(_hole_views[pid].size()):
+				if k < p.hole.size():
+					var cv2: CardView = _hole_views[pid][k]
+					if cv2.face_up and PokerGame.card_matches(cv2.card, p.hole[k]):
+						continue
+					await animate_flip(cv2, p.hole[k])
+		var made := p.last_hand_detail if p.last_hand_detail != "" else p.last_hand_name
+		var verb := "show" if p.is_human else "shows"
+		if made != "":
+			set_status("%s %s %s" % [p.display_name, verb, made])
+		else:
+			set_status("%s %s" % [p.display_name, verb])
+		await get_tree().create_timer(_pace("reveal_stagger", 0.45), false).timeout
+
+
+## Lift the 5-card scoring hand off the felt: winners get the full gold lift,
+## beaten-but-shown hands a smaller lift so the viewer can compare.
+func _apply_spotlight() -> void:
+	_clear_spotlight()
+	if game == null:
+		return
+	for r in game.showdown_results:
+		if not r.get("revealed", true):
+			continue
+		var pid: int = r["player"]
+		var p: PokerPlayer = game.players[pid]
+		var best5: Array = r.get("best5", [])
+		if best5.is_empty():
+			continue
+		var lift := SPOTLIGHT_WIN_LIFT if p.is_winner else SPOTLIGHT_LOSE_LIFT
+		for k in range(_hole_views[pid].size()):
+			if k < p.hole.size() and _card_in(p.hole[k], best5):
+				_lift_card(_hole_views[pid][k], lift, p.is_winner)
+		for k in range(_community_views.size()):
+			if k < game.community.size() and _card_in(game.community[k], best5):
+				_lift_card(_community_views[k], lift, p.is_winner)
+
+
+func _card_in(card: Card, best5: Array) -> bool:
+	for b in best5:
+		if PokerGame.card_matches(card, b):
+			return true
+	return false
+
+
+func _lift_card(cv: CardView, lift: float, winner: bool) -> void:
+	if _spotlight.has(cv):
+		if winner:
+			cv.set_highlight(true)
+			# Shared board cards may have been lifted first for a beaten
+			# hand; upgrade to the full winner lift so winners always
+			# stand tallest.
+			var prev: float = float(cv.get_meta("spot_lift", 0.0))
+			if lift > prev:
+				var base: Vector2 = cv.get_meta("base_pos", cv.position + Vector2(0, prev))
+				cv.set_meta("spot_lift", lift)
+				cv.set_meta("base_pos", base)
+				cv.position = base + Vector2(0, -lift)
+		return
+	cv.set_meta("base_pos", cv.position)
+	cv.set_meta("spot_lift", lift)
+	_spotlight.append(cv)
+	cv.position = cv.position + Vector2(0, -lift)
+	if winner:
+		cv.set_highlight(true)
+
+
+func _clear_spotlight() -> void:
+	for cv in _spotlight:
+		if is_instance_valid(cv):
+			if cv.has_meta("base_pos"):
+				cv.position = cv.get_meta("base_pos")
+				cv.remove_meta("base_pos")
+			if cv.has_meta("spot_lift"):
+				cv.remove_meta("spot_lift")
+			cv.set_highlight(false)
+	_spotlight.clear()
+
+
 func clear_hand_visuals() -> void:
 	for i in range(_seat_views.size()):
 		for cv in _hole_views[i]:
 			cv.visible = false
 			cv.set_highlight(false)
+			cv.modulate = Color.WHITE
+			cv.scale = Vector2.ONE
 	for cv in _community_views:
 		cv.visible = false
 		cv.set_highlight(false)
 	_banner_panel.visible = false
 	_result_panel.visible = false
 	awaiting_result = false
+	_history.clear()
+	_last_recorded = ""
+	_history_label.text = ""
+	_exposed.clear()
+	_clear_spotlight()
 	_community_dealt = 0
 
 
@@ -436,6 +581,9 @@ func _sync_seats() -> void:
 		_seat_views[i].bind(p)
 		_seat_views[i].set_turn(i == game.to_act and not game.hand_over)
 		_seat_views[i].set_dealer(i == game.button)
+	if game.hand_over:
+		_call_button.text = "—"
+		_raise_button.text = "Raise"
 	_pot_value = game.total_pot()
 	_update_hud()
 	queue_redraw()
@@ -489,26 +637,44 @@ func play_events(events: Array) -> void:
 					dwell += _pace("all_in_bonus", 0.30)
 				_sync_seats()
 				set_status(_action_message(ev))
+				if act == "fold":
+					await _discard_hole_cards(int(ev["player"]))
 				await get_tree().create_timer(dwell, false).timeout
 			"street":
-				await _deal_community(ev["cards"])
+				var runout := bool(ev.get("runout", false))
+				var street_no := int(ev.get("street", -1))
+				if runout and street_no == PokerGame.Street.RIVER:
+					await show_banner("The river…", GOLD, 1.0)
+				await _deal_community(ev["cards"], runout, street_no)
 				_sync_seats()
-				set_status(ev.get("name", "") + " \u2014 " + _turn_status())
+				set_status(ev.get("name", "") + " — " + _turn_status())
 				await get_tree().create_timer(_pace("street_settle", 0.40), false).timeout
+			"all_in_showdown":
+				var exposed: Array = ev.get("players", [])
+				_sync_seats()
+				await show_banner("All-in! Cards on their backs!", GOLD, 1.2)
+				await _expose_hole_cards(exposed)
 			"refund":
 				animate_chip_flight(POT_CENTER * size, seat_center(ev["player"]), Color("#9ad06a"), 2, 0.3)
 				set_status(ev.get("message", ""))
 				_sync_seats()
 				await get_tree().create_timer(_pace("refund", 0.32), false).timeout
 			"showdown":
-				reveal_showdown()
-				await get_tree().create_timer(_pace("showdown_reveal", 0.65), false).timeout
+				var order: Array = ev.get("reveal_order", [])
+				if order.is_empty():
+					for pl in game.players:
+						if not pl.folded and not pl.out:
+							order.append(pl.id)
+				var revealed: Array = ev.get("revealed", order)
+				await _reveal_in_order(order, revealed)
+				_apply_spotlight()
+				await get_tree().create_timer(_pace("spotlight_hold", 0.90), false).timeout
 			"win":
 				var wpid: int = ev["player"]
 				_highlight_winner(wpid)
 				animate_chip_flight(POT_CENTER * size, seat_center(wpid), GOLD, 5, 0.45)
 				SoundBank.play("win", randf_range(0.98, 1.04), -6.0)
-				set_status("%s wins %d" % [game.players[wpid].display_name, ev["amount"]])
+				set_status("%s wins %s" % [game.players[wpid].display_name, _fmt(int(ev["amount"]))])
 				_sync_seats()
 				await get_tree().create_timer(_pace("win", 0.70), false).timeout
 			"hand_end":
@@ -545,7 +711,7 @@ func _highlight_winner(pid: int) -> void:
 	_seat_views[pid].set_turn(true)
 
 
-func _deal_community(cards: Array) -> void:
+func _deal_community(cards: Array, runout: bool = false, street_no: int = -1) -> void:
 	for card in cards:
 		if _community_dealt >= _community_views.size():
 			break
@@ -557,10 +723,86 @@ func _deal_community(cards: Array) -> void:
 		cv.position = DECK_ORIGIN * size - cv.size * 0.5
 		cv.set_card(card, false)
 		SoundBank.play("deal", randf_range(0.9, 1.05))
+		var flight := _pace("runout_deal", 0.45) if runout else 0.16
 		var t := create_tween()
-		t.tween_property(cv, "position", target, 0.16).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+		t.tween_property(cv, "position", target, flight).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 		await t.finished
 		await animate_flip(cv, card)
+		if runout:
+			await get_tree().create_timer(_runout_hold(street_no), false).timeout
+
+
+## Sweat dwell after each runout card: the river holds longest.
+func _runout_hold(street_no: int) -> float:
+	match street_no:
+		PokerGame.Street.RIVER:
+			return _pace("runout_river", 1.50)
+		PokerGame.Street.TURN:
+			return _pace("runout_turn", 0.90)
+		_:
+			return _pace("runout_flop", 0.55)
+
+
+## Flip exposed all-in hands face-up without announcing their strength;
+## the runout itself is the drama.
+func _expose_hole_cards(exposed: Array) -> void:
+	if game == null:
+		return
+	for pid in exposed:
+		if not _exposed.has(pid):
+			_exposed.append(pid)
+		var p: PokerPlayer = game.players[pid]
+		for k in range(_hole_views[pid].size()):
+			if k < p.hole.size():
+				var cv: CardView = _hole_views[pid][k]
+				cv.visible = true
+				if cv.face_up and PokerGame.card_matches(cv.card, p.hole[k]):
+					continue
+				cv.set_card(p.hole[k], false)
+		_sync_seats()
+		SoundBank.play("deal", 1.0, -12.0)
+		for k in range(_hole_views[pid].size()):
+			if k < p.hole.size():
+				var cvf: CardView = _hole_views[pid][k]
+				if cvf.face_up and PokerGame.card_matches(cvf.card, p.hole[k]):
+					continue
+				await animate_flip(cvf, p.hole[k])
+		if p.all_in:
+			set_status("%s is all-in — no more bets" % p.display_name, false)
+		else:
+			set_status("%s calls the all-in — no more bets" % p.display_name, false)
+		await get_tree().create_timer(_pace("all_in_flip", 0.35), false).timeout
+
+
+## Throw a folded hand to the dealer: the cards slide to the deck, shrink and
+## fade out, then vanish. Real poker never leaves a folded hand on the felt.
+func _discard_hole_cards(pid: int) -> void:
+	if not _hole_views.has(pid):
+		return
+	var cards: Array = _hole_views[pid]
+	var any := false
+	for cv in cards:
+		if cv.visible:
+			any = true
+			break
+	if not any:
+		return
+	var dur := _pace("fold_discard", 0.30)
+	var target := DECK_ORIGIN * size
+	for cv in cards:
+		if not cv.visible:
+			continue
+		var t := create_tween()
+		t.set_parallel(true)
+		t.tween_property(cv, "position", target - cv.size * 0.5, dur).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+		t.tween_property(cv, "modulate:a", 0.0, dur)
+		t.tween_property(cv, "scale", Vector2(0.6, 0.6), dur)
+	await get_tree().create_timer(dur, false).timeout
+	for cv in cards:
+		cv.visible = false
+		cv.modulate = Color.WHITE
+		cv.scale = Vector2.ONE
+		cv.set_highlight(false)
 
 
 func _update_hud() -> void:
@@ -631,10 +873,12 @@ func _layout() -> void:
 	var cx := s.x * 0.5
 	_status_label.position = Vector2(28, 6)
 	_status_label.size = Vector2(s.x - 56, 30)
+	_history_label.position = Vector2(s.x - 488, 8)
+	_history_label.size = Vector2(460, 24)
 	_raise_label.position = Vector2(cx - 440, 38)
 	_raise_label.size = Vector2(230, 34)
-	_raise_slider.position = Vector2(cx - 210, 42)
-	_raise_slider.size = Vector2(380, 28)
+	_raise_slider.position = Vector2(cx - 210, 40)
+	_raise_slider.size = Vector2(380, 34)
 	for k in range(_quick_buttons.size()):
 		var b: Button = _quick_buttons[k]
 		b.size = Vector2(74, 34)
@@ -656,9 +900,9 @@ func _layout() -> void:
 	_banner_panel.position = Vector2(20, 52)
 
 	# End-of-hand summary, centred over the felt above the action bar.
-	var result_w := minf(560.0, s.x * 0.64)
-	_result_panel.size = Vector2(result_w, 280)
-	_result_panel.position = Vector2((s.x - result_w) * 0.5, s.y * 0.12)
+	var result_w := minf(660.0, s.x * 0.72)
+	_result_panel.size = Vector2(result_w, 300)
+	_result_panel.position = Vector2((s.x - result_w) * 0.5, s.y * 0.10)
 
 
 # ---------------------------------------------------------------------------
@@ -695,7 +939,11 @@ func _draw_pot() -> void:
 		return
 	var center := POT_CENTER * size
 	var font := get_theme_default_font()
-	var text := "POT  %d" % _pot_value
+	var text := "POT  %s" % _fmt(_pot_value)
+	if game != null:
+		var street := game.street_name()
+		if street != "" and street != "Showdown" and street != "Complete":
+			text += "  •  " + street.to_upper()
 	var fs := 24
 	var tw := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
 	var pad := 18.0
@@ -726,13 +974,27 @@ func _ellipse_outline(center: Vector2, rx: float, ry: float, segments: int = 64)
 # Action bar state
 # ---------------------------------------------------------------------------
 
-func set_status(text: String) -> void:
+func set_status(text: String, record: bool = true) -> void:
+	if record:
+		if _last_recorded != "" and _last_recorded != text:
+			_history.push_front(_last_recorded)
+			while _history.size() > 2:
+				_history.pop_back()
+			_history_label.text = "  •  ".join(PackedStringArray(_history))
+		_last_recorded = text
 	_status_label.text = text
 
 
 func show_actions(legal: Dictionary) -> void:
 	_human_can_raise = legal.get("can_raise", false)
-	_status_label.text = "Your turn"
+	var to_call: int = legal.get("to_call", 0)
+	var pot := game.total_pot() if game != null else 0
+	if to_call > 0:
+		set_status("Your turn — call %s to win %s" % [_fmt(legal.get("call_amount", to_call)), _fmt(pot)], false)
+	elif _human_can_raise:
+		set_status("Your turn — check or bet", false)
+	else:
+		set_status("Your turn — check", false)
 	_fold_button.disabled = false
 	_call_button.disabled = not (legal.get("can_check", false) or legal.get("can_call", false))
 	if legal.get("can_check", false):
@@ -740,9 +1002,9 @@ func show_actions(legal: Dictionary) -> void:
 	elif legal.get("can_call", false):
 		var amt: int = legal.get("call_amount", 0)
 		if legal.get("is_all_in_call", false):
-			_call_button.text = "Call All-In %d" % amt
+			_call_button.text = "Call All-In %s" % _fmt(amt)
 		else:
-			_call_button.text = "Call %d" % amt
+			_call_button.text = "Call %s" % _fmt(amt)
 	else:
 		_call_button.text = "\u2014"
 
@@ -775,11 +1037,13 @@ func set_waiting(text: String) -> void:
 	_fold_button.disabled = true
 	_call_button.disabled = true
 	_raise_button.disabled = true
+	_call_button.text = "—"
+	_raise_button.text = "Raise"
 	_raise_slider.visible = false
 	_raise_label.visible = false
 	for b in _quick_buttons:
 		b.visible = false
-	_status_label.text = text
+	set_status(text, false)
 
 
 func _on_raise_slider_changed(_value: float) -> void:
@@ -787,8 +1051,11 @@ func _on_raise_slider_changed(_value: float) -> void:
 
 
 func _update_raise_label() -> void:
+	var to := int(_raise_slider.value)
 	var verb := "Raise to" if game != null and game.current_bet > 0 else "Bet"
-	_raise_label.text = "%s %d" % [verb, int(_raise_slider.value)]
+	_raise_label.text = "%s %s" % [verb, _fmt(to)]
+	if _human_can_raise:
+		_raise_button.text = "%s %s" % [verb, _fmt(to)]
 
 
 func _on_quick_press(kind: float) -> void:
@@ -805,7 +1072,8 @@ func _on_quick_press(kind: float) -> void:
 		# chip (including live bets), so only the pending call is added.
 		var hero := game.current_player()
 		var to_call: int = game.current_bet - (hero.bet if hero != null else 0)
-		target = game.current_bet + int((game.total_pot() + to_call) * kind)
+		target = PokerGame.pot_raise_target(game.current_bet, game.total_pot(),
+			to_call, kind, int(_raise_slider.min_value), int(_raise_slider.max_value))
 	target = clampi(target, int(_raise_slider.min_value), int(_raise_slider.max_value))
 	_raise_slider.value = target
 	_update_raise_label()
@@ -940,6 +1208,7 @@ func show_hand_result(seconds: float) -> void:
 	if instant or game == null:
 		return
 	_refresh_result_panel()
+	set_status(_result_title.text, false)
 	_result_panel.visible = true
 	_result_panel.modulate.a = 0.0
 	var t := create_tween()
@@ -993,19 +1262,26 @@ func _refresh_result_panel() -> void:
 	if winners.size() == 1:
 		var w: Dictionary = winners[0]
 		var wp: PokerPlayer = game.players[int(w["player"])]
-		_result_title.text = "%s %s %d" % [wp.display_name, _win_verb(wp), int(w.get("amount", 0))]
+		_result_title.text = "%s %s %s" % [wp.display_name, _win_verb(wp), _fmt(int(w.get("gross", w.get("amount", 0))))]
 	elif winners.size() > 1:
-		_result_title.text = "Split pot"
+		var shares: Array = []
+		for wr in winners:
+			shares.append(_fmt(int(wr.get("gross", wr.get("amount", 0)))))
+		if shares.all(func(s): return s == shares[0]):
+			_result_title.text = "Split pot — %s each" % " / ".join(PackedStringArray(shares))
+		else:
+			_result_title.text = "Split pot — %s" % " / ".join(PackedStringArray(shares))
 	else:
 		_result_title.text = "Showdown"
 	for r in game.showdown_results:
 		_add_result_row(r)
+	_add_pot_lines()
 
 
 func _refresh_uncontested_result() -> void:
 	for p in game.players:
 		if p.is_winner:
-			_result_title.text = "%s %s %d" % [p.display_name, _win_verb(p), p.won_last]
+			_result_title.text = "%s %s %s" % [p.display_name, _win_verb(p), _fmt(p.won_last)]
 			return
 	_result_title.text = "Hand complete"
 
@@ -1019,28 +1295,63 @@ func _add_result_row(r: Dictionary) -> void:
 	var row := HBoxContainer.new()
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var name_label := Label.new()
-	name_label.add_theme_font_size_override("font_size", 19)
+	name_label.add_theme_font_size_override("font_size", 18)
 	name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	name_label.clip_text = true
 	name_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var hand: String = r.get("name", "")
-	name_label.text = "%s  \u2014  %s" % [p.display_name, hand] if hand != "" else p.display_name
-	name_label.add_theme_color_override("font_color",
-		Color("#ffe9b0") if r.get("won", false) else Color("#9fb3bd"))
+	if not r.get("revealed", true):
+		name_label.text = "%s  —  mucks" % p.display_name
+		name_label.add_theme_color_override("font_color", Color("#9fb3bd"))
+	else:
+		var detail: String = r.get("detail", r.get("name", ""))
+		var hole: Array = r.get("hole", [])
+		if not hole.is_empty():
+			name_label.text = "%s  %s  —  %s" % [p.display_name, _hole_text(hole), detail]
+		elif detail != "":
+			name_label.text = "%s  —  %s" % [p.display_name, detail]
+		else:
+			name_label.text = p.display_name
+		name_label.add_theme_color_override("font_color",
+			Color("#ffe9b0") if r.get("won", false) else Color("#9fb3bd"))
 	var amount_label := Label.new()
-	amount_label.add_theme_font_size_override("font_size", 19)
+	amount_label.add_theme_font_size_override("font_size", 18)
 	amount_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	amount_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var net: int = int(r.get("net", 0))
-	amount_label.text = ("+%d" % net) if net >= 0 else str(net)
-	if net > 0:
+	# Gross chip movement as bare numbers: what the winner is paid, and
+	# what everyone else put in. Color and the title say who gets it.
+	var gross: int = int(r.get("gross", r.get("amount", 0)))
+	var lost: int = int(r.get("committed", 0))
+	if r.get("won", false):
+		amount_label.text = _fmt(gross)
 		amount_label.add_theme_color_override("font_color", Color("#8fd694"))
-	elif net < 0:
+	elif lost > 0:
+		amount_label.text = _fmt(lost)
 		amount_label.add_theme_color_override("font_color", Color("#e07060"))
 	else:
+		amount_label.text = "—"
 		amount_label.add_theme_color_override("font_color", Color("#9fb3bd"))
 	row.add_child(name_label)
 	row.add_child(amount_label)
 	_result_rows.add_child(row)
+
+
+## One small line per side pot so split/odd-chip awards are not a mystery.
+func _add_pot_lines() -> void:
+	if game == null or game.last_pots.size() <= 1:
+		return
+	var idx := 1
+	for pot in game.last_pots:
+		var names := PackedStringArray()
+		for pid in pot.get("eligible", []):
+			names.append(game.players[pid].display_name)
+		var line := Label.new()
+		line.add_theme_font_size_override("font_size", 15)
+		line.add_theme_color_override("font_color", Color("#7d8f97"))
+		line.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		line.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		line.text = "Pot %d: %s (%s)" % [idx, _fmt(int(pot.get("amount", 0))), ", ".join(names)]
+		_result_rows.add_child(line)
+		idx += 1
 
 
 func _board_text() -> String:
@@ -1049,8 +1360,27 @@ func _board_text() -> String:
 	var parts: Array = []
 	for c in game.community:
 		parts.append(c.rank_label() + _suit_symbol(c.suit))
-	return "  ".join(PackedStringArray(parts))
+	return "Board:  " + "  ".join(PackedStringArray(parts))
 
 
 func _suit_symbol(suit: int) -> String:
 	return SUIT_SYMBOLS[suit] if suit >= 0 and suit < SUIT_SYMBOLS.size() else ""
+
+
+func _fmt(amount: int) -> String:
+	var s := str(absi(amount))
+	var out := ""
+	var count := 0
+	for i in range(s.length() - 1, -1, -1):
+		out = s[i] + out
+		count += 1
+		if count % 3 == 0 and i > 0:
+			out = "," + out
+	return ("-" if amount < 0 else "") + out
+
+
+func _hole_text(hole: Array) -> String:
+	var parts := PackedStringArray()
+	for c in hole:
+		parts.append(c.rank_label() + _suit_symbol(c.suit))
+	return "  ".join(parts)

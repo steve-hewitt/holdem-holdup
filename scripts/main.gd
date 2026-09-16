@@ -24,6 +24,7 @@ var _autoplay: bool = false
 var _turbo: bool = false
 var _hands_target: int = -1
 var _shot_screen: String = ""
+var _showdown_mode: String = ""
 
 
 func _ready() -> void:
@@ -268,6 +269,8 @@ func _start_game() -> void:
 	]
 	game = PokerGame.new()
 	game.setup(defs, 10, 20)
+	if _showdown_mode != "":
+		game.showdown_reveal_mode = _showdown_mode
 	ai = PokerAI.new()
 	table.set_game(game)
 	table.reset_for_new_hand()
@@ -324,7 +327,11 @@ func _run_hand(my_session: int) -> void:
 		if p.is_human:
 			await _human_turn(my_session)
 		else:
-			table.set_waiting("%s is thinking\u2026" % p.display_name)
+			var legal := game.get_legal_actions()
+			var context := game.street_name()
+			if legal.get("can_call", false):
+				context += " \u2014 call %d to win %d" % [legal.get("call_amount", 0), game.total_pot()]
+			table.set_waiting("%s is thinking\u2026 (%s)" % [p.display_name, context])
 			var delay := 0.0 if _turbo else randf_range(0.30, 0.60)
 			await get_tree().create_timer(delay, false).timeout
 			if my_session != _session:
@@ -376,7 +383,7 @@ func _finish_hand(my_session: int) -> void:
 		return
 	var human := game.human_player()
 	if human.net_last > 0:
-		table.set_status("You win %d!" % human.net_last)
+		table.set_status("You win %d!" % human.won_last)
 		if human.net_last >= game.big_blind * 12:
 			SoundBank.play("jackpot", 1.0, -5.0)
 	else:
@@ -533,6 +540,12 @@ func _parse_cmdline() -> void:
 			_autoplay = true
 		elif arg.begins_with("--hands="):
 			_hands_target = int(arg.substr(8))
+		elif arg.begins_with("--showdown="):
+			var mode := arg.substr(11).to_lower().replace("-", "_")
+			if mode == "muck" or mode == "muck_losers":
+				_showdown_mode = "muck_losers"
+			else:
+				_showdown_mode = "show_all"
 	if _screenshot_path != "" and _shot_frames <= 0:
 		_shot_frames = 150
 	if table != null:

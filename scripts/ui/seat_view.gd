@@ -89,7 +89,7 @@ func _draw() -> void:
 	draw_string(font, Vector2(text_x, size.y * 0.32), player.display_name,
 		HORIZONTAL_ALIGNMENT_LEFT, -1, name_size, name_color)
 
-	var chips_size := int(size.y * 0.25)
+	var chips_size := int(size.y * 0.23)
 	var chips_color := Color("#ffd873") if not player.out else Color(1, 1, 1, 0.35)
 	_chip_icon(Vector2(text_x + chips_size * 0.34, size.y * 0.72), chips_size * 0.32)
 	draw_string(font, Vector2(text_x + chips_size * 0.78, size.y * 0.80), _format(player.chips),
@@ -109,22 +109,29 @@ func _draw() -> void:
 		status_color = Color(1, 1, 1, 0.35)
 	elif player.folded:
 		status = "Folded"
-		status_color = Color("#8a8f95")
+		status_color = Color("#a7b0b6")
 	elif player.all_in:
 		status = "All in"
 		status_color = Color("#ff9d6b")
+	elif player.last_action == "Small blind":
+		status = "SB %s" % _format(player.bet)
+		status_color = Color("#8fd694")
+	elif player.last_action == "Big blind":
+		status = "BB %s" % _format(player.bet)
+		status_color = Color("#8fd694")
 	elif player.bet > 0:
-		status = "Bet %d" % player.bet
+		status = "Bet %s" % _format(player.bet)
 		status_color = Color("#8fd694")
 	if status != "":
-		var status_size := int(size.y * 0.17)
+		var status_size := int(size.y * 0.165)
 		var sw := font.get_string_size(status, HORIZONTAL_ALIGNMENT_LEFT, -1, status_size).x
 		draw_string(font, Vector2(size.x - sw - 12, size.y * 0.84), status,
 			HORIZONTAL_ALIGNMENT_LEFT, -1, status_size, status_color)
 
 	if is_dealer:
-		var d_r := size.y * 0.145
+		var d_r := size.y * 0.175
 		var d_c := Vector2(size.x - d_r - 8, d_r + 4)
+		draw_circle(d_c, d_r + 2.0, Color(0, 0, 0, 0.45))
 		draw_circle(d_c, d_r, Color("#f4f4f4"))
 		draw_arc(d_c, d_r, 0, TAU, 24, Color("#b8a45a"), 2.0)
 		var ds := int(d_r * 1.2)

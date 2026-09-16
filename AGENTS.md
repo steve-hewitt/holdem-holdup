@@ -69,6 +69,9 @@ safe to leave in the code:
 - `--shot=path.png` / `--frames=N` — start a game and screenshot after N frames.
 - `--shot-title=path.png` — screenshot the title screen.
 - `--shot=path.png --shot-screen=pause|result` — screenshot those screens.
+- `--showdown=show-all|muck` — showdown reveal policy override (default
+  `show_all`; the `holdem_holdup/showdown_reveal` project setting is the
+  no-code-change default).
 
 ## Tests
 

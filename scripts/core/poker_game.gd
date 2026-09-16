@@ -20,6 +20,14 @@ const ACTION_RAISE := "raise"
 
 const STREET_NAMES := ["Pre-Flop", "Flop", "Turn", "River", "Showdown", "Complete"]
 
+## Showdown reveal policy. "show_all" flips every contender; "muck_losers"
+## keeps beaten hands face-down. Configurable without a code change via the
+## `holdem_holdup/showdown_reveal` project setting (see project.godot) or the
+## `--showdown=` CLI flag, which main.gd forwards to `showdown_reveal_mode`.
+const REVEAL_SHOW_ALL := "show_all"
+const REVEAL_MUCK_LOSERS := "muck_losers"
+const REVEAL_SETTING := "holdem_holdup/showdown_reveal"
+
 var players: Array = []
 var deck: Deck
 var community: Array = []
@@ -38,6 +46,15 @@ var game_winner: int = -1
 var showdown_results: Array = []
 var last_pots: Array = []
 var events: Array = []
+## Last player to bet/raise on the current street (-1 when nobody did).
+var last_aggressor: int = -1
+## Showdown reveal order (player ids) and the subset actually flipped face-up.
+var reveal_order: Array = []
+var revealed_ids: Array = []
+## Contenders exposed early by an all-in runout (subset of revealed_ids).
+var exposed_ids: Array = []
+## Reveal policy override; defaults to the project setting in setup().
+var showdown_reveal_mode: String = REVEAL_SHOW_ALL
 
 var _rng := RandomNumberGenerator.new()
 
@@ -60,6 +77,11 @@ func setup(defs: Array, p_small_blind: int = 10, p_big_blind: int = 20, seed_val
 		players.append(p)
 	small_blind = p_small_blind
 	big_blind = p_big_blind
+	showdown_reveal_mode = str(ProjectSettings.get_setting(REVEAL_SETTING, REVEAL_SHOW_ALL))
+	last_aggressor = -1
+	reveal_order.clear()
+	revealed_ids.clear()
+	exposed_ids.clear()
 	deck = Deck.new(seed_value)
 	button = -1
 	hand_number = 0
@@ -79,6 +101,10 @@ func start_hand() -> Array:
 	events.clear()
 	showdown_results.clear()
 	last_pots.clear()
+	reveal_order.clear()
+	revealed_ids.clear()
+	exposed_ids.clear()
+	last_aggressor = -1
 	hand_over = false
 
 	for p in players:
@@ -283,6 +309,7 @@ func _apply_raise(p: PokerPlayer, amount: int, la: Dictionary) -> void:
 
 	p.has_acted = true
 	p.can_raise = false
+	last_aggressor = p.id
 	var verb := "raise to"
 	if p.all_in:
 		verb = "all-in for"
@@ -336,6 +363,7 @@ func _complete_street() -> void:
 	_deal_street_cards()
 	current_bet = 0
 	min_raise = big_blind
+	last_aggressor = -1
 	for p in players:
 		if not p.out:
 			p.reset_for_street()
@@ -347,10 +375,35 @@ func _complete_street() -> void:
 
 
 func _run_out_and_showdown() -> void:
+	# Casino rule: when every remaining contender is all-in with board still
+	# to come, hands are exposed before the runout so the table can sweat it.
+	var exposed := _exposed_all_in_ids()
+	exposed_ids = exposed.duplicate()
+	if not exposed.is_empty():
+		_event({"type": "all_in_showdown", "players": exposed})
 	while street < Street.RIVER:
 		street += 1
-		_deal_street_cards()
+		_deal_street_cards(not exposed.is_empty())
 	_do_showdown()
+
+
+## Player ids whose hole cards must be flipped now: betting is closed (this is
+## only reached once no further decisions remain) and at least one contender
+## is all-in, so every live hand is tabled while the board runs out. A caller
+## with chips behind still shows, matching the casino rule. Empty when the
+## board is already complete or nobody committed their stack.
+func _exposed_all_in_ids() -> Array:
+	if community.size() >= 5:
+		return []
+	var ids: Array = []
+	var any_all_in := false
+	for p in _contenders():
+		if p.all_in:
+			any_all_in = true
+		ids.append(p.id)
+	if not any_all_in:
+		return []
+	return ids if ids.size() > 1 else []
 
 
 func _do_showdown() -> void:
@@ -359,17 +412,53 @@ func _do_showdown() -> void:
 	var pots := _build_side_pots()
 	last_pots = pots
 
+	# Award the pots now for accounting, but hold the win events until after
+	# the showdown reveal so chips visually stay in the pot while hands show.
+	var wins_from := events.size()
 	for pot in pots:
 		_award_pot(pot)
+	var wins := events.slice(wins_from)
+	events.resize(wins_from)
 
 	for p in players:
 		p.has_acted = true
 		p.net_last = p.won_last - p.committed
+	reveal_order = _compute_reveal_order()
+	# Hands exposed mid-runout stay up no matter the muck policy.
+	revealed_ids = exposed_ids.duplicate()
+	if showdown_reveal_mode == REVEAL_MUCK_LOSERS:
+		revealed_ids.clear()
+		for pid in reveal_order:
+			if players[pid].is_winner:
+				revealed_ids.append(pid)
+	else:
+		revealed_ids = reveal_order.duplicate()
+	for pid in exposed_ids:
+		if not revealed_ids.has(pid):
+			revealed_ids.append(pid)
 	_build_showdown_results()
 	hand_over = true
 	street = Street.SHOWDOWN
 	to_act = -1
-	_event({"type": "showdown", "results": showdown_results.duplicate(), "pots": pots})
+	_event({"type": "showdown", "results": showdown_results.duplicate(),
+		"pots": pots, "reveal_order": reveal_order.duplicate(),
+		"revealed": revealed_ids.duplicate()})
+	for w in wins:
+		events.append(w)
+
+
+## Real-poker reveal order: the last aggressor on the final betting round
+## shows first; everyone else follows clockwise from the button. When nobody
+## bet the last round, the first contender left of the button leads.
+func _compute_reveal_order() -> Array:
+	var ids: Array = []
+	for p in _contenders():
+		ids.append(p.id)
+	var ordered := _order_from_button(ids)
+	if last_aggressor >= 0 and ordered.has(last_aggressor):
+		ordered.erase(last_aggressor)
+		ordered.push_front(last_aggressor)
+	return ordered
 
 
 func _end_hand_by_fold() -> void:
@@ -490,23 +579,37 @@ func _award_pot(pot: Dictionary) -> void:
 		var p: PokerPlayer = players[i]
 		var res: Dictionary = results[i]
 		p.last_hand_name = res["name"]
+		p.last_hand_detail = HandEvaluator.detail(res)
 		p.last_hand_cards = res["cards"]
 
 
-## One summary row per player who reached showdown (a player eligible for
-## several pots is listed once, with their combined winnings and net result).
+## One summary row per player who reached showdown, listed in reveal order.
+## A player eligible for several pots is listed once, with combined winnings.
+## `gross` is chips actually paid out; `net` subtracts what they put in.
 func _build_showdown_results() -> void:
 	showdown_results.clear()
-	for p in players:
+	for pid in reveal_order:
+		var p: PokerPlayer = players[pid]
 		if p.folded or p.out:
 			continue
+		if p.last_hand_cards.is_empty() and p.hole.size() + community.size() >= 5:
+			var res := HandEvaluator.evaluate_best(_all_cards(p.hole, community))
+			p.last_hand_name = res["name"]
+			p.last_hand_detail = HandEvaluator.detail(res)
+			p.last_hand_cards = res["cards"]
 		showdown_results.append({
 			"player": p.id,
 			"name": p.last_hand_name,
+			"detail": p.last_hand_detail,
 			"score": HandEvaluator.score(p.hole, community),
+			"hole": p.hole.duplicate(),
 			"cards": p.last_hand_cards,
+			"best5": p.last_hand_cards.duplicate(),
 			"won": p.is_winner,
+			"revealed": revealed_ids.has(p.id),
 			"amount": p.won_last,
+			"gross": p.won_last,
+			"committed": p.committed,
 			"net": p.net_last,
 		})
 
@@ -537,7 +640,7 @@ func _post_blind(p: PokerPlayer, amount: int, label: String) -> void:
 	_event({"type": "blind", "player": p.id, "amount": posted, "label": label})
 
 
-func _deal_street_cards() -> void:
+func _deal_street_cards(runout: bool = false) -> void:
 	var count := 3 if street == Street.FLOP else 1
 	var dealt: Array = []
 	for _i in range(count):
@@ -545,7 +648,7 @@ func _deal_street_cards() -> void:
 		community.append(card)
 		dealt.append(card)
 	_event({"type": "street", "street": street, "cards": dealt,
-		"name": street_name()})
+		"name": street_name(), "runout": runout})
 
 
 func _increase_blinds() -> void:
@@ -580,6 +683,14 @@ func _opponent_can_call(p: PokerPlayer) -> bool:
 		if other.id != p.id and other.can_contribute():
 			return true
 	return false
+
+
+## Standard pot-sized raise target: call the current bet first, then raise
+## the resulting pot. kind 1.0 = full pot, 0.5 = half pot. The result is a
+## raise-TO amount, truncated to whole chips and clamped to [lo, hi].
+static func pot_raise_target(current_bet: int, total_pot: int, to_call: int, kind: float, lo: int, hi: int) -> int:
+	var target := current_bet + int((total_pot + to_call) * kind)
+	return clampi(target, lo, hi)
 
 
 ## True when betting is finished: every contender is all-in, or at most one
@@ -649,8 +760,32 @@ func _all_cards(hole: Array, board: Array) -> Array:
 	return all
 
 
+## True when two Card handles are the same physical card (same instance, or
+## — as a fallback — same rank and suit, which is unique within one deck).
+static func card_matches(a: Card, b: Card) -> bool:
+	if a == null or b == null:
+		return false
+	if is_same(a, b):
+		return true
+	return a.rank == b.rank and a.suit == b.suit
+
+
+## Indices into `cards` whose entries match `target`. Empty when absent.
+static func card_indices(cards: Array, target: Card) -> Array:
+	var out: Array = []
+	for i in range(cards.size()):
+		if card_matches(cards[i], target):
+			out.append(i)
+	return out
+
+
 func _pv(p: PokerPlayer, verb: String) -> String:
-	return verb if p.is_human else verb + "s"
+	if p.is_human:
+		return verb
+	# Multi-word verbs agree on their head word: "raise to" -> "raises to".
+	if verb.ends_with(" to"):
+		return verb.substr(0, verb.length() - 3) + "s to"
+	return verb + "s"
 
 
 func _be(p: PokerPlayer) -> String:
