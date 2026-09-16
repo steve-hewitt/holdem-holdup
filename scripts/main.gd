@@ -541,7 +541,7 @@ func _parse_cmdline() -> void:
 		elif arg.begins_with("--hands="):
 			_hands_target = int(arg.substr(8))
 		elif arg.begins_with("--showdown="):
-			var mode := arg.substr(11).to_lower()
+			var mode := arg.substr(11).to_lower().replace("-", "_")
 			if mode == "muck" or mode == "muck_losers":
 				_showdown_mode = "muck_losers"
 			else:

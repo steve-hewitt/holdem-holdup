@@ -392,6 +392,10 @@ func refresh_all() -> void:
 				cv.visible = true
 				cv.set_card(p.hole[k], p.is_human or _revealed(p))
 				cv.position = _hole_slots[i][k] - cv.size * 0.5
+				if _spotlight.has(cv) and cv.has_meta("spot_lift"):
+					var lift: float = float(cv.get_meta("spot_lift", 0.0))
+					cv.set_meta("base_pos", cv.position)
+					cv.position = cv.position + Vector2(0, -lift)
 				cv.modulate = Color.WHITE
 				cv.set_dimmed(p.folded)
 			else:
@@ -403,6 +407,10 @@ func refresh_all() -> void:
 			cv.visible = true
 			cv.set_card(game.community[k], true)
 			cv.position = _community_slots[k] - cv.size * 0.5
+			if _spotlight.has(cv) and cv.has_meta("spot_lift"):
+				var lift2: float = float(cv.get_meta("spot_lift", 0.0))
+				cv.set_meta("base_pos", cv.position)
+				cv.position = cv.position + Vector2(0, -lift2)
 		else:
 			cv.visible = false
 	_community_dealt = game.community.size()
@@ -450,17 +458,21 @@ func _reveal_in_order(order: Array, revealed: Array) -> void:
 			continue
 		var p: PokerPlayer = game.players[pid]
 		# Runout-exposed hands are already face-up; only announce them.
-		if not _exposed.has(pid):
+		if not _exposed.has(pid) and not game.exposed_ids.has(pid):
 			for k in range(_hole_views[pid].size()):
 				if k < p.hole.size():
 					var cv: CardView = _hole_views[pid][k]
 					cv.visible = true
+					if cv.face_up and PokerGame.card_matches(cv.card, p.hole[k]):
+						continue
 					cv.set_card(p.hole[k], false)
 			_sync_seats()
 			SoundBank.play("deal", 1.0, -12.0)
 			for k in range(_hole_views[pid].size()):
 				if k < p.hole.size():
 					var cv2: CardView = _hole_views[pid][k]
+					if cv2.face_up and PokerGame.card_matches(cv2.card, p.hole[k]):
+						continue
 					await animate_flip(cv2, p.hole[k])
 		var made := p.last_hand_detail if p.last_hand_detail != "" else p.last_hand_name
 		var verb := "show" if p.is_human else "shows"
@@ -505,8 +517,18 @@ func _lift_card(cv: CardView, lift: float, winner: bool) -> void:
 	if _spotlight.has(cv):
 		if winner:
 			cv.set_highlight(true)
+			# Shared board cards may have been lifted first for a beaten
+			# hand; upgrade to the full winner lift so winners always
+			# stand tallest.
+			var prev: float = float(cv.get_meta("spot_lift", 0.0))
+			if lift > prev:
+				var base: Vector2 = cv.get_meta("base_pos", cv.position + Vector2(0, prev))
+				cv.set_meta("spot_lift", lift)
+				cv.set_meta("base_pos", base)
+				cv.position = base + Vector2(0, -lift)
 		return
 	cv.set_meta("base_pos", cv.position)
+	cv.set_meta("spot_lift", lift)
 	_spotlight.append(cv)
 	cv.position = cv.position + Vector2(0, -lift)
 	if winner:
@@ -518,6 +540,9 @@ func _clear_spotlight() -> void:
 		if is_instance_valid(cv):
 			if cv.has_meta("base_pos"):
 				cv.position = cv.get_meta("base_pos")
+				cv.remove_meta("base_pos")
+			if cv.has_meta("spot_lift"):
+				cv.remove_meta("spot_lift")
 			cv.set_highlight(false)
 	_spotlight.clear()
 
@@ -645,7 +670,7 @@ func play_events(events: Array) -> void:
 				_highlight_winner(wpid)
 				animate_chip_flight(POT_CENTER * size, seat_center(wpid), GOLD, 5, 0.45)
 				SoundBank.play("win", randf_range(0.98, 1.04), -6.0)
-				set_status("%s wins %d" % [game.players[wpid].display_name, ev["amount"]])
+				set_status("%s wins %s" % [game.players[wpid].display_name, _fmt(int(ev["amount"]))])
 				_sync_seats()
 				await get_tree().create_timer(_pace("win", 0.70), false).timeout
 			"hand_end":
@@ -727,12 +752,17 @@ func _expose_hole_cards(exposed: Array) -> void:
 			if k < p.hole.size():
 				var cv: CardView = _hole_views[pid][k]
 				cv.visible = true
+				if cv.face_up and PokerGame.card_matches(cv.card, p.hole[k]):
+					continue
 				cv.set_card(p.hole[k], false)
 		_sync_seats()
 		SoundBank.play("deal", 1.0, -12.0)
 		for k in range(_hole_views[pid].size()):
 			if k < p.hole.size():
-				await animate_flip(_hole_views[pid][k], p.hole[k])
+				var cvf: CardView = _hole_views[pid][k]
+				if cvf.face_up and PokerGame.card_matches(cvf.card, p.hole[k]):
+					continue
+				await animate_flip(cvf, p.hole[k])
 		set_status("%s is all-in — no more bets" % p.display_name, false)
 		await get_tree().create_timer(_pace("all_in_flip", 0.35), false).timeout
 
@@ -922,11 +952,11 @@ func show_actions(legal: Dictionary) -> void:
 	var to_call: int = legal.get("to_call", 0)
 	var pot := game.total_pot() if game != null else 0
 	if to_call > 0:
-		set_status("Your turn — call %s to win %s" % [_fmt(legal.get("call_amount", to_call)), _fmt(pot)])
+		set_status("Your turn — call %s to win %s" % [_fmt(legal.get("call_amount", to_call)), _fmt(pot)], false)
 	elif _human_can_raise:
-		set_status("Your turn — check or bet")
+		set_status("Your turn — check or bet", false)
 	else:
-		set_status("Your turn — check")
+		set_status("Your turn — check", false)
 	_fold_button.disabled = false
 	_call_button.disabled = not (legal.get("can_check", false) or legal.get("can_call", false))
 	if legal.get("can_check", false):
@@ -934,9 +964,9 @@ func show_actions(legal: Dictionary) -> void:
 	elif legal.get("can_call", false):
 		var amt: int = legal.get("call_amount", 0)
 		if legal.get("is_all_in_call", false):
-			_call_button.text = "Call All-In %d" % amt
+			_call_button.text = "Call All-In %s" % _fmt(amt)
 		else:
-			_call_button.text = "Call %d" % amt
+			_call_button.text = "Call %s" % _fmt(amt)
 	else:
 		_call_button.text = "\u2014"
 
@@ -1200,7 +1230,10 @@ func _refresh_result_panel() -> void:
 		var shares: Array = []
 		for wr in winners:
 			shares.append(_fmt(int(wr.get("gross", wr.get("amount", 0)))))
-		_result_title.text = "Split pot — %s each" % " / ".join(PackedStringArray(shares))
+		if shares.all(func(s): return s == shares[0]):
+			_result_title.text = "Split pot — %s each" % " / ".join(PackedStringArray(shares))
+		else:
+			_result_title.text = "Split pot — %s" % " / ".join(PackedStringArray(shares))
 	else:
 		_result_title.text = "Showdown"
 	for r in game.showdown_results:
