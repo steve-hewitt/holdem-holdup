@@ -218,7 +218,7 @@ func test_no_exposure_when_board_complete() -> void:
 		"river all-ins go straight to the ordered reveal")
 
 
-func test_no_exposure_when_one_player_live() -> void:
+func test_exposure_when_all_in_called_by_live_player() -> void:
 	var game := _make_game(2, 6, 500)
 	game.start_hand()
 	game.events.clear()
@@ -235,10 +235,23 @@ func test_no_exposure_when_one_player_live() -> void:
 	game.players[1].hole = [Card.new(2, 0), Card.new(7, 1)]
 	game.button = 0
 	game._run_out_and_showdown()
-	assert_true(game.exposed_ids.is_empty(), "a live player keeps cards covered")
+	assert_eq(game.exposed_ids, [0, 1],
+		"an all-in call tables both hands even when the caller has chips behind")
 	for ev in game.events:
 		if ev.get("type", "") == "street":
-			assert_false(bool(ev.get("runout", false)))
+			assert_true(bool(ev.get("runout", false)))
+
+
+func test_all_in_called_by_covered_player_exposes_through_play() -> void:
+	var game := _make_game(2, 99, 500)
+	game.players[1].chips = 1000
+	game.start_hand()
+	game.apply("raise", 500)
+	var last: Array = game.apply("call")
+	assert_true(game.hand_over)
+	assert_true(_all_in_types(last).has("all_in_showdown"),
+		"a covered caller tables both hands before the runout")
+	assert_eq(game.exposed_ids, [0, 1])
 
 
 func test_exposed_hands_stay_revealed_in_muck_mode() -> void:

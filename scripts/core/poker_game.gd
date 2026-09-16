@@ -387,17 +387,22 @@ func _run_out_and_showdown() -> void:
 	_do_showdown()
 
 
-## Player ids whose hole cards must be flipped now: every contender is
-## all-in and the board is incomplete. Empty when normal covering applies
-## (someone can still bet, or the board is already out).
+## Player ids whose hole cards must be flipped now: betting is closed (this is
+## only reached once no further decisions remain) and at least one contender
+## is all-in, so every live hand is tabled while the board runs out. A caller
+## with chips behind still shows, matching the casino rule. Empty when the
+## board is already complete or nobody committed their stack.
 func _exposed_all_in_ids() -> Array:
 	if community.size() >= 5:
 		return []
 	var ids: Array = []
+	var any_all_in := false
 	for p in _contenders():
-		if not p.all_in:
-			return []
+		if p.all_in:
+			any_all_in = true
 		ids.append(p.id)
+	if not any_all_in:
+		return []
 	return ids if ids.size() > 1 else []
 
 

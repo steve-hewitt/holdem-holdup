@@ -80,18 +80,32 @@ func test_runout_community_arrives_face_up() -> void:
 	assert_true(cv.face_up, "runout river arrives face-up")
 
 
-func test_folded_cards_dim_opaque() -> void:
+func test_folded_cards_leave_the_felt() -> void:
 	var table := _make_table()
 	var game := _make_exposed_game()
 	game.players[2].hole = [Card.new(9, 0), Card.new(9, 1)]
 	table.set_game(game)
 	table.refresh_all()
-	var folded_cv: CardView = table._hole_views[2][0]
-	assert_true(folded_cv.dimmed, "folded hole reads dimmed")
-	assert_eq(folded_cv.modulate, Color.WHITE, "dim is opaque, never alpha")
+	for k in range(2):
+		var folded_cv: CardView = table._hole_views[2][k]
+		assert_false(folded_cv.visible, "folded hole %d is not shown" % k)
 	var live_cv: CardView = table._hole_views[0][0]
-	assert_false(live_cv.dimmed)
-	assert_eq(live_cv.modulate, Color.WHITE)
+	assert_true(live_cv.visible, "a live hand stays on the felt")
+
+
+func test_discard_animation_hides_folded_hand() -> void:
+	var table := _make_table()
+	var game := _make_exposed_game()
+	game.players[2].folded = false
+	game.players[2].hole = [Card.new(9, 0), Card.new(9, 1)]
+	table.set_game(game)
+	table.refresh_all()
+	var cv: CardView = table._hole_views[2][0]
+	assert_true(cv.visible, "hand starts on the felt")
+	await table._discard_hole_cards(2)
+	assert_false(cv.visible, "discarded hand leaves the felt")
+	assert_eq(cv.modulate, Color.WHITE, "fade is reset for the next hand")
+	assert_eq(cv.scale, Vector2.ONE, "scale is reset for the next hand")
 
 
 func test_recap_rows_show_bare_numbers() -> void:

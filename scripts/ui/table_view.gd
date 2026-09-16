@@ -58,6 +58,7 @@ const PACE := {
 	"action_check": 0.22,
 	"action_call": 0.32,
 	"action_raise": 0.48,
+	"fold_discard": 0.30,
 	"all_in_bonus": 0.30,
 	"street_settle": 0.40,
 	"refund": 0.32,
@@ -385,10 +386,10 @@ func refresh_all() -> void:
 		_seat_views[i].bind(p)
 		_seat_views[i].set_turn(i == game.to_act and not game.hand_over)
 		_seat_views[i].set_dealer(i == game.button)
-		# Hole cards
+		# Hole cards. A folded hand is thrown in, so it leaves the felt.
 		for k in range(_hole_views[i].size()):
 			var cv: CardView = _hole_views[i][k]
-			if k < p.hole.size() and not p.out:
+			if k < p.hole.size() and not p.out and not p.folded:
 				cv.visible = true
 				cv.set_card(p.hole[k], p.is_human or _revealed(p))
 				cv.position = _hole_slots[i][k] - cv.size * 0.5
@@ -397,7 +398,6 @@ func refresh_all() -> void:
 					cv.set_meta("base_pos", cv.position)
 					cv.position = cv.position + Vector2(0, -lift)
 				cv.modulate = Color.WHITE
-				cv.set_dimmed(p.folded)
 			else:
 				cv.visible = false
 	# Community
@@ -552,6 +552,8 @@ func clear_hand_visuals() -> void:
 		for cv in _hole_views[i]:
 			cv.visible = false
 			cv.set_highlight(false)
+			cv.modulate = Color.WHITE
+			cv.scale = Vector2.ONE
 	for cv in _community_views:
 		cv.visible = false
 		cv.set_highlight(false)
@@ -635,6 +637,8 @@ func play_events(events: Array) -> void:
 					dwell += _pace("all_in_bonus", 0.30)
 				_sync_seats()
 				set_status(_action_message(ev))
+				if act == "fold":
+					await _discard_hole_cards(int(ev["player"]))
 				await get_tree().create_timer(dwell, false).timeout
 			"street":
 				var runout := bool(ev.get("runout", false))
@@ -763,8 +767,42 @@ func _expose_hole_cards(exposed: Array) -> void:
 				if cvf.face_up and PokerGame.card_matches(cvf.card, p.hole[k]):
 					continue
 				await animate_flip(cvf, p.hole[k])
-		set_status("%s is all-in — no more bets" % p.display_name, false)
+		if p.all_in:
+			set_status("%s is all-in — no more bets" % p.display_name, false)
+		else:
+			set_status("%s calls the all-in — no more bets" % p.display_name, false)
 		await get_tree().create_timer(_pace("all_in_flip", 0.35), false).timeout
+
+
+## Throw a folded hand to the dealer: the cards slide to the deck, shrink and
+## fade out, then vanish. Real poker never leaves a folded hand on the felt.
+func _discard_hole_cards(pid: int) -> void:
+	if not _hole_views.has(pid):
+		return
+	var cards: Array = _hole_views[pid]
+	var any := false
+	for cv in cards:
+		if cv.visible:
+			any = true
+			break
+	if not any:
+		return
+	var dur := _pace("fold_discard", 0.30)
+	var target := DECK_ORIGIN * size
+	for cv in cards:
+		if not cv.visible:
+			continue
+		var t := create_tween()
+		t.set_parallel(true)
+		t.tween_property(cv, "position", target - cv.size * 0.5, dur).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+		t.tween_property(cv, "modulate:a", 0.0, dur)
+		t.tween_property(cv, "scale", Vector2(0.6, 0.6), dur)
+	await get_tree().create_timer(dur, false).timeout
+	for cv in cards:
+		cv.visible = false
+		cv.modulate = Color.WHITE
+		cv.scale = Vector2.ONE
+		cv.set_highlight(false)
 
 
 func _update_hud() -> void:
@@ -1101,7 +1139,6 @@ func animate_deal_hole(pid: int, card: Card, index: int) -> void:
 	cv.position = DECK_ORIGIN * size - cv.size * 0.5
 	cv.scale = Vector2(0.3, 0.3)
 	cv.modulate = Color.WHITE
-	cv.set_dimmed(false)
 	cv.set_card(card, game.players[pid].is_human)
 	SoundBank.play("deal", randf_range(0.92, 1.08))
 	var t := create_tween()
